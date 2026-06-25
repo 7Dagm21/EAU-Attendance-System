@@ -153,7 +153,11 @@ const DrillDownModal = ({
 );
 
 // ── Main component ────────────────────────────────────────────────────────────
-const AttendanceChart = () => {
+const AttendanceChart = ({
+  onDataFetched,
+}: {
+  onDataFetched?: (totals: { present: number; late: number; excused: number; absent: number }) => void;
+} = {}) => {
   const [chartData, setChartData] = useState<any[]>([]);
   // rawRecords: offeringId → attendance records (kept for drill-down)
   const [rawRecords, setRawRecords] = useState<Record<number, any[]>>({});
@@ -312,6 +316,19 @@ const AttendanceChart = () => {
       setChartData(
         data.filter((d) => d.Present + d.Late + d.Excused + d.Absent > 0),
       );
+
+      if (onDataFetched) {
+        const totals = data.reduce(
+          (acc, curr) => ({
+            present: acc.present + curr.Present,
+            late: acc.late + curr.Late,
+            excused: acc.excused + curr.Excused,
+            absent: acc.absent + curr.Absent,
+          }),
+          { present: 0, late: 0, excused: 0, absent: 0 },
+        );
+        onDataFetched(totals);
+      }
     } catch (e) {
       console.error(e);
     } finally {

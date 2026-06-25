@@ -2,9 +2,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, Send, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
-import { getAtRiskApi } from "@/api/axios";
+import { getAtRiskApi, sendAtRiskNotificationsApi } from "@/api/axios";
 
 interface AtRiskStudent {
+  student_pk: number;
+  offering_id: number;
   student_id: string;
   student_name: string;
   course_name: string;
@@ -60,6 +62,40 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
   });
   const display = fullPage ? filteredStudents : filteredStudents.slice(0, 5);
 
+  const handleBulkNotify = async () => {
+    if (filteredStudents.length === 0) {
+      toast.info("No students to notify.");
+      return;
+    }
+    const toastId = toast.loading("Sending notifications...");
+    try {
+      const payload = {
+        notifications: filteredStudents.map(s => ({
+          student_pk: s.student_pk,
+          offering_id: s.offering_id
+        }))
+      };
+      await sendAtRiskNotificationsApi(payload);
+      toast.success(`Successfully sent ${filteredStudents.length} notifications!`, { id: toastId });
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to send bulk notifications.", { id: toastId });
+    }
+  };
+
+  const handleNotify = async (student: AtRiskStudent) => {
+    const toastId = toast.loading(`Notifying ${student.student_name}...`);
+    try {
+      await sendAtRiskNotificationsApi({
+        notifications: [{ student_pk: student.student_pk, offering_id: student.offering_id }]
+      });
+      toast.success(`Successfully notified ${student.student_name}!`, { id: toastId });
+    } catch (e) {
+      console.error(e);
+      toast.error(`Failed to notify ${student.student_name}.`, { id: toastId });
+    }
+  };
+
   return (
     <Card className="shadow-card border-border/50">
       <CardHeader className="flex flex-row items-center justify-between pb-4">
@@ -75,7 +111,7 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
           )}
         </div>
         <button
-          onClick={() => toast.info("Bulk notification sent!")}
+          onClick={handleBulkNotify}
           className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
         >
           <Send className="w-3.5 h-3.5" /> Bulk Notify
@@ -202,9 +238,7 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button
-                      onClick={() =>
-                        toast.success(`Notified ${s.student_name}`)
-                      }
+                      onClick={() => handleNotify(s)}
                       className="text-xs text-primary hover:underline font-medium"
                     >
                       Notify

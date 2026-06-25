@@ -86,6 +86,12 @@ const AdminDashboard = () => {
   const [currentSemesterId, setCurrentSemesterId] = useState<
     number | undefined
   >();
+  const [filteredStatusCounts, setFilteredStatusCounts] = useState<{
+    present: number;
+    late: number;
+    excused: number;
+    absent: number;
+  } | null>(null);
 
   // Build scope filter params for dean and dept_head
   const scopeParams: Record<string, any> = (() => {
@@ -129,14 +135,7 @@ const AdminDashboard = () => {
           studentParams.programme = scopeParams.programme;
         }
 
-        const [
-          coursesRes,
-          studentsRes,
-          notifRes,
-          programmesRes,
-          statsRes,
-          atRiskRes,
-        ] = await Promise.all([
+        const results = await Promise.allSettled([
           getCoursesApi(courseParams),
           getStudentsApi(studentParams),
           getNotificationsApi(),
@@ -145,12 +144,21 @@ const AdminDashboard = () => {
           getAtRiskApi(baseParams),
         ]);
 
-        setCourses(coursesRes.data);
-        setProgrammes(programmesRes.data);
-        setStudents(studentsRes.data || []);
-        setNotifications(notifRes.data.notifications || []);
-        setStats(statsRes.data);
-        setAtRiskCount(atRiskRes.data.count || 0);
+        const [
+          coursesRes,
+          studentsRes,
+          notifRes,
+          programmesRes,
+          statsRes,
+          atRiskRes,
+        ] = results;
+
+        if (coursesRes.status === 'fulfilled') setCourses(coursesRes.value.data);
+        if (studentsRes.status === 'fulfilled') setStudents(studentsRes.value.data || []);
+        if (notifRes.status === 'fulfilled') setNotifications(notifRes.value.data.notifications || []);
+        if (programmesRes.status === 'fulfilled') setProgrammes(programmesRes.value.data);
+        if (statsRes.status === 'fulfilled') setStats(statsRes.value.data);
+        if (atRiskRes.status === 'fulfilled') setAtRiskCount(atRiskRes.value.data.count || 0);
       } catch (e) {
         console.error(e);
       } finally {
@@ -165,10 +173,10 @@ const AdminDashboard = () => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
-  const statusCounts = {
+  const activeStatusCounts = filteredStatusCounts || {
     present: stats.status_distribution?.present || 0,
     late: stats.status_distribution?.late || 0,
-    exempted: stats.status_distribution?.excused || 0,
+    excused: stats.status_distribution?.excused || 0,
     absent: stats.status_distribution?.absent || 0,
   };
 
@@ -224,13 +232,13 @@ const AdminDashboard = () => {
               />
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2">
-                  <AttendanceChart />
+                  <AttendanceChart onDataFetched={setFilteredStatusCounts} />
                 </div>
                 <StatusDistribution
-                  present={statusCounts.present}
-                  late={statusCounts.late}
-                  exempted={statusCounts.exempted}
-                  absent={statusCounts.absent}
+                  present={activeStatusCounts.present}
+                  late={activeStatusCounts.late}
+                  exempted={activeStatusCounts.excused}
+                  absent={activeStatusCounts.absent}
                 />
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

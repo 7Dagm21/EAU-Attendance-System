@@ -262,6 +262,7 @@ export const getAtRiskApi = (params?: {
   semester?: number;
   programme?: number;
 }) => api.get("/at-risk/", { params });
+export const sendAtRiskNotificationsApi = (data: any) => api.post("/at-risk/notify/", data);
 
 // ── Users ─────────────────────────────────────────────────────
 export const getUsersApi = (params?: { role?: string }) =>

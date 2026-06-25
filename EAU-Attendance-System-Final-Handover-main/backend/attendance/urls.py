@@ -64,6 +64,7 @@ urlpatterns = [
     # ── Dashboard ─────────────────────────────────────
     path('stats/',    views.StatsView.as_view()),
     path('at-risk/',  views.AtRiskView.as_view()),
+    path('at-risk/notify/', views.AtRiskNotifyView.as_view()),
 
     # ── Users ─────────────────────────────────────────
     path('users/',                 views.UserListView.as_view()),

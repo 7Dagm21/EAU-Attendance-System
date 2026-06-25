@@ -283,27 +283,32 @@ const TeacherOfferingsField = ({ teacherId }: { teacherId: number }) => {
           return (
             <label
               key={o.id}
-              className={`flex items-center justify-between gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/40 ${
+              className={`flex items-start justify-between gap-3 px-4 py-3 text-sm cursor-pointer hover:bg-muted/40 transition-colors ${
                 savingId === o.id ? "opacity-50" : ""
               }`}
             >
-              <span className="flex items-center gap-2 min-w-0">
+              <span className="flex items-start gap-3">
                 <input
                   type="checkbox"
                   checked={assignedToMe}
                   disabled={savingId === o.id}
                   onChange={(e) => toggle(o.id, e.target.checked)}
-                  className="rounded border-input flex-shrink-0"
+                  className="mt-0.5 w-4 h-4 rounded border-input text-primary focus:ring-primary flex-shrink-0 cursor-pointer"
                 />
-                <span className="truncate">
-                  {o.course_name} — {o.programme_name} · Sec {o.section_name}{" "}
-                  (Y{o.section_year})
+                <span className="flex flex-col gap-0.5">
+                  <span className="font-medium leading-tight">{o.course_name}</span>
+                  <span className="text-muted-foreground text-xs leading-snug">
+                    {o.programme_name} · Sec {o.section_name} (Y{o.section_year})
+                  </span>
                 </span>
               </span>
               {assignedToOther && (
-                <span className="text-xs text-amber-600 flex-shrink-0">
-                  Currently: {o.teacher_name}
-                </span>
+                <div className="flex flex-col items-end flex-shrink-0 mt-0.5">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Currently</span>
+                  <span className="text-xs text-amber-600 font-medium text-right">
+                    {o.teacher_name}
+                  </span>
+                </div>
               )}
             </label>
           );
@@ -416,10 +421,23 @@ const UserRolesTab = () => {
         managed_department_id: editForm.managed_department,
       };
       if (editForm.password) payload.password = editForm.password;
-      const res = await updateUserApi(editUser.id, payload);
-      setUsers((prev) =>
-        prev.map((u) => (u.id === editUser.id ? res.data : u)),
-      );
+      await updateUserApi(editUser.id, payload);
+      
+      const [usersRes, offeringsRes] = await Promise.all([
+        getUsersApi(),
+        getOfferingsApi({}),
+      ]);
+      const offerings = offeringsRes.data;
+      const usersWithCourses = usersRes.data.map((u: User) => {
+        if (u.role === "teacher") {
+          const courses = offerings
+            .filter((o: any) => o.teacher === u.id)
+            .map((o: any) => o.course_name);
+          return { ...u, teaching_courses: courses };
+        }
+        return u;
+      });
+      setUsers(usersWithCourses);
       toast.success("User updated!");
       setEditOpen(false);
     } catch {
