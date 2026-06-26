@@ -87,10 +87,8 @@ class Course(models.Model):
     programme = models.ForeignKey(
         Programme, on_delete=models.CASCADE, related_name='courses'
     )
-    # Optional — course can belong to a specific department
     department = models.ForeignKey(
-        Department, on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='courses'
+        Department, on_delete=models.CASCADE, related_name='courses'
     )
     year = models.IntegerField(default=1)
     semester = models.IntegerField(
@@ -175,13 +173,13 @@ class Student(models.Model):
     last_name = models.CharField(max_length=50)
     student_id = models.CharField(max_length=20, unique=True)
     email = models.EmailField(unique=True)
-    parent_email = models.EmailField(blank=True, default='')
-    parent_telegram = models.CharField(max_length=100, blank=True, default='')
+    parent_email = models.EmailField()
+    parent_telegram = models.CharField(max_length=100)
     programme = models.ForeignKey(
-        Programme, on_delete=models.SET_NULL, null=True, related_name='students'
+        Programme, on_delete=models.CASCADE, related_name='students'
     )
     department = models.ForeignKey(
-        Department, on_delete=models.SET_NULL, null=True, blank=True, related_name='students'
+        Department, on_delete=models.CASCADE, related_name='students'
     )
     is_active = models.BooleanField(default=True)
 

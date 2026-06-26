@@ -166,6 +166,18 @@ const AdminDashboard = () => {
       }
     };
     fetchData();
+
+    // Poll for new notifications
+    const interval = setInterval(async () => {
+      try {
+        const notifRes = await getNotificationsApi();
+        setNotifications(notifRes.data.notifications || []);
+      } catch (e) {
+        console.error("Failed to fetch notifications:", e);
+      }
+    }, 15000); // 15 seconds
+    
+    return () => clearInterval(interval);
   }, []);
 
   const handleMarkRead = async (id: number) => {

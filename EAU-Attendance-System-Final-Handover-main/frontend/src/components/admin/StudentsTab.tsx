@@ -346,9 +346,12 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
       !addForm.first_name ||
       !addForm.last_name ||
       !addForm.student_id ||
-      !addForm.email
+      !addForm.email ||
+      !addSemester ||
+      !addYear ||
+      !addForm.section_id
     ) {
-      toast.error("Please fill all required fields");
+      toast.error("Please fill all required fields (including Semester, Year, and Section)");
       return;
     }
     setAdding(true);
@@ -475,8 +478,8 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
 
   const downloadStudentTemplate = () => {
     const csv = [
-      "first_name,last_name,student_id,email,parent_email,parent_telegram,programme_code,department_code,section_id",
-      "Abebe,Kebede,UGR/10001/24,abebe.kebede@example.com,parent1@example.com,,AME,AME-DEPT,",
+      "First Name,Last Name,University ID,Email,Parent Email,Parent Telegram,School,Department,Section,Year,Semester",
+      "Abebe,Kebede,UGR/10001/24,abebe.kebede@example.com,parent1@example.com,@kebede_parent,AME,AME-DEPT,A,1,1",
     ].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -1070,7 +1073,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  School
+                  School *
                 </p>
                 <select
                   value={addForm.programme_id}
@@ -1094,7 +1097,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Department
+                  Department *
                 </p>
                 <select
                   value={addForm.department_id}
@@ -1116,7 +1119,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Semester
+                  Semester *
                 </p>
                 <select
                   value={addSemester}
@@ -1134,7 +1137,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Year
+                  Year *
                 </p>
                 <select
                   value={addYear}
@@ -1154,7 +1157,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Section
+                  Section *
                 </p>
                 <select
                   value={addForm.section_id}
@@ -1177,7 +1180,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Parent Email
+                  Parent Email *
                 </p>
                 <input
                   value={addForm.parent_email}
@@ -1189,7 +1192,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Parent Telegram
+                  Parent Telegram *
                 </p>
                 <input
                   value={addForm.parent_telegram}
@@ -1271,15 +1274,12 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
                 CSV Format Required:
               </p>
               <p className="font-mono text-xs">
-                first_name, last_name, student_id, email, parent_email,
-                parent_telegram, programme_code, department_code, section_id
+                First Name, Last Name, University ID, Email, Parent Email,
+                Parent Telegram, School, Department, Section, Year, Semester
               </p>
               <p>
-                The <span className="font-medium">programme_code</span> (school
-                code) and <span className="font-medium">department_code</span>{" "}
-                must match codes already set up in the system. The{" "}
-                <span className="font-medium">section_id</span> is optional —
-                students can be enrolled later.
+                The <span className="font-medium">School</span> (programme code) and <span className="font-medium">Department</span>{" "}
+                must match codes already set up in the system. The student will be automatically enrolled in all classes given to the specified <span className="font-medium">Section</span>, <span className="font-medium">Year</span>, and <span className="font-medium">Semester</span>.
               </p>
               <button
                 onClick={downloadStudentTemplate}

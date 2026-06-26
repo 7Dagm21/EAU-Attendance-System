@@ -1040,40 +1040,72 @@ class StudentBulkImportView(APIView):
         created, updated, errors = [], [], []
         for i, row in enumerate(reader, start=2):
             try:
-                student_id = row.get('student_id', '').strip()
+                student_id = row.get('University ID', '').strip()
                 if not student_id:
-                    errors.append({'row': i, 'error': 'student_id is required'})
+                    errors.append({'row': i, 'error': 'University ID is required'})
                     continue
-                programme = None
-                if row.get('programme_code', '').strip():
-                    programme = Programme.objects.filter(
-                        code__iexact=row['programme_code'].strip()).first()
-                department = None
-                if row.get('department_code', '').strip():
-                    department = Department.objects.filter(
-                        code__iexact=row['department_code'].strip()).first()
+
+                # Enforce mandatory fields
+                first_name = row.get('First Name', '').strip()
+                last_name = row.get('Last Name', '').strip()
+                email = row.get('Email', '').strip()
+                parent_email = row.get('Parent Email', '').strip()
+                parent_telegram = row.get('Parent Telegram', '').strip()
+                school_code = row.get('School', '').strip()
+                dept_code = row.get('Department', '').strip()
+                section_name = row.get('Section', '').strip()
+                year_str = row.get('Year', '').strip()
+                sem_str = row.get('Semester', '').strip()
+
+                if not all([first_name, last_name, email, parent_email, parent_telegram, school_code, dept_code, section_name, year_str, sem_str]):
+                    errors.append({'row': i, 'error': 'All fields are mandatory (Name, ID, School, Section, Department, Email, Parent Email/Telegram, Year, Semester).'})
+                    continue
+
+                programme = Programme.objects.filter(code__iexact=school_code).first()
+                if not programme:
+                    errors.append({'row': i, 'error': f'School (Programme) {school_code} not found'})
+                    continue
+
+                department = Department.objects.filter(code__iexact=dept_code).first()
+                if not department:
+                    errors.append({'row': i, 'error': f'Department {dept_code} not found'})
+                    continue
+
                 student, was_created = Student.objects.update_or_create(
                     student_id=student_id,
                     defaults={
-                        'first_name':      row.get('first_name', '').strip(),
-                        'last_name':       row.get('last_name', '').strip(),
-                        'email':           row.get('email', '').strip(),
-                        'parent_email':    row.get('parent_email', '').strip(),
-                        'parent_telegram': row.get('parent_telegram', '').strip(),
+                        'first_name':      first_name,
+                        'last_name':       last_name,
+                        'email':           email,
+                        'parent_email':    parent_email,
+                        'parent_telegram': parent_telegram,
                         'programme':       programme,
                         'department':      department,
                         'is_active':       True,
                     }
                 )
-                if row.get('section_id', '').strip():
-                    try:
-                        section = Section.objects.get(
-                            id=int(row['section_id'].strip()))
+
+                # Auto-enroll in the section
+                try:
+                    year = int(year_str)
+                    sem = int(sem_str)
+                    section = Section.objects.filter(
+                        name__iexact=section_name,
+                        year=year,
+                        semester__number=sem,
+                        programme=programme
+                    ).first()
+                    
+                    if section:
                         Enrollment.objects.get_or_create(
                             student=student, section=section,
-                            defaults={'status': 'active'})
-                    except (Section.DoesNotExist, ValueError):
-                        pass
+                            defaults={'status': 'active'}
+                        )
+                    else:
+                        errors.append({'row': i, 'error': f'Section {section_name} (Y{year} S{sem}) not found for auto-enrollment'})
+                except ValueError:
+                    errors.append({'row': i, 'error': 'Year and Semester must be numbers'})
+
                 if was_created:
                     created.append(student_id)
                 else:
@@ -1622,6 +1654,14 @@ class AttendanceSubmitView(APIView):
         total_logged = present_h + late_h + absent_h  # excused excluded
         if total_logged == 0:
             return
+
+        # 4-session grace period: only calculate at-risk if at least 4 sessions have been taught
+        distinct_dates = AttendanceRecord.objects.filter(
+            course_offering=offering
+        ).values('date').distinct().count()
+        if distinct_dates < 4:
+            return
+
         total_credit    = Decimal(str(offering.course.total_credit_hours))
         effective_credit = max(total_credit - excused_h, Decimal('1'))
         if not is_gate_open(total_logged, total_credit):

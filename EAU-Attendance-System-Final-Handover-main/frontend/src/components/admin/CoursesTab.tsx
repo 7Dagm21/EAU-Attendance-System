@@ -316,7 +316,7 @@ const CoursesTab = ({
 
   const downloadTemplate = () => {
     const csv = [
-      "course_name,code,programme_code,department_code,year,semester,credit_hours",
+      "Course Name,Code,School,Department,Year,Semester,Credit Hours",
       "Aerodynamics I,AERO201,AME,AME-DEPT,2,1,48",
     ].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -351,50 +351,56 @@ const CoursesTab = ({
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      if (!row.course_name || !row.credit_hours) {
+      const courseName = row["course name"];
+      const code = row["code"];
+      const school = row["school"];
+      const dept = row["department"];
+      const year = row["year"];
+      const sem = row["semester"];
+      const creditHours = row["credit hours"];
+
+      if (!courseName || !code || !school || !dept || !year || !sem || !creditHours) {
         errors.push({
           row: i + 2,
-          error: "Missing course_name or credit_hours",
+          error: "All fields are mandatory (Course Name, Code, School, Department, Year, Semester, Credit Hours)",
         });
         continue;
       }
       const prog = programmes.find(
         (p) =>
-          p.code?.toLowerCase() === row.programme_code?.toLowerCase() ||
-          p.name?.toLowerCase() === row.programme_code?.toLowerCase(),
+          p.code?.toLowerCase() === school?.toLowerCase() ||
+          p.name?.toLowerCase() === school?.toLowerCase(),
       );
       if (!prog) {
         errors.push({
           row: i + 2,
-          error: `School "${row.programme_code}" not found`,
+          error: `School "${school}" not found`,
         });
         continue;
       }
-      let dept: Department | undefined;
-      if (row.department_code?.trim()) {
-        dept = allDepartments.find(
-          (d) =>
-            d.programme === prog.id &&
-            (d.code?.toLowerCase() === row.department_code?.toLowerCase() ||
-              d.name?.toLowerCase() === row.department_code?.toLowerCase()),
-        );
-        if (!dept) {
-          errors.push({
-            row: i + 2,
-            error: `Department "${row.department_code}" not found in ${prog.name}`,
-          });
-          continue;
-        }
+      let deptObj: Department | undefined;
+      deptObj = allDepartments.find(
+        (d) =>
+          d.programme === prog.id &&
+          (d.code?.toLowerCase() === dept?.toLowerCase() ||
+            d.name?.toLowerCase() === dept?.toLowerCase()),
+      );
+      if (!deptObj) {
+        errors.push({
+          row: i + 2,
+          error: `Department "${dept}" not found in ${prog.name}`,
+        });
+        continue;
       }
       try {
         const res = await createCourseApi({
-          name: row.course_name,
-          code: row.code || "",
-          total_credit_hours: parseFloat(row.credit_hours),
+          name: courseName,
+          code: code,
+          total_credit_hours: parseFloat(creditHours),
           programme_id: prog.id,
-          department_id: dept?.id,
-          year: parseInt(row.year) || 1,
-          semester: parseInt(row.semester) || 1,
+          department_id: deptObj?.id,
+          year: parseInt(year) || 1,
+          semester: parseInt(sem) || 1,
         });
         newCourses.push(res.data);
         created++;
@@ -997,14 +1003,12 @@ const CoursesTab = ({
                   <Download className="w-3 h-3" /> Download template
                 </button>
               </div>
-              <p className="font-mono text-xs text-muted-foreground">
-                course_name, code, programme_code, year, semester, credit_hours
+              <p className="font-mono text-xs">
+                Course Name, Code, School, Department, Year, Semester, Credit Hours
               </p>
               <p className="text-xs text-muted-foreground">
-                <span className="font-medium">programme_code</span> must match
-                your school code (e.g. AME) or full name. Teacher assignment
-                is done in{" "}
-                <span className="font-medium">Setup → Course Offerings</span>.
+                The <span className="font-medium">School</span> (programme code) and <span className="font-medium">Department</span>{" "}
+                must match codes already set up in the system. All fields are mandatory.
               </p>
             </div>
 

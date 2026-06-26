@@ -2,10 +2,18 @@ import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search } from "lucide-react";
+import { Search, Upload } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { getAttendanceApi, getSectionsApi, getSemestersApi, getDepartmentsApi, getUsersApi } from "@/api/axios";
-
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import AttendanceImportModal from "@/components/admin/AttendanceImportModal";
+import { getAttendanceApi, getSectionsApi, getSemestersApi, getDepartmentsApi, getUsersApi, getOfferingsApi } from "@/api/axios";
 interface Course {
   id: number;
   name: string;
@@ -36,6 +44,14 @@ interface Teacher {
   first_name?: string;
   last_name?: string;
   username: string;
+}
+interface Offering {
+  id: number;
+  course_name: string;
+  section_name: string;
+  section_year: number;
+  programme_name: string;
+  teacher_name?: string;
 }
 
 interface AttendanceTabProps {
@@ -75,6 +91,59 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
   const [sections, setSections] = useState<Section[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+
+  // Import Modal States
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [offerings, setOfferings] = useState<Offering[]>([]);
+  const [selectedOfferingId, setSelectedOfferingId] = useState("");
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [selectedOffering, setSelectedOffering] = useState<Offering | undefined>();
+
+  // Local filters for the Import Dialog
+  const [importSemester, setImportSemester] = useState("");
+  const [importYear, setImportYear] = useState("");
+  const [importCourse, setImportCourse] = useState("");
+  const [importSection, setImportSection] = useState("");
+
+  const openSelector = async () => {
+    setSelectorOpen(true);
+    setOfferings([]);
+    setSelectedOfferingId("");
+    setImportYear("");
+    setImportCourse("");
+    setImportSection("");
+    // Use the global semester if set, otherwise leave blank
+    setImportSemester(filterSemester || "");
+    try {
+      // Fetch all offerings to allow local filtering
+      const res = await getOfferingsApi();
+      setOfferings(res.data || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const filteredOfferingsForImport = offerings.filter((o: any) => {
+    if (importSemester && String(o.semester_id) !== importSemester && String(o.semester) !== importSemester) {
+      // Handle cases where the API returns either semester_id or semester
+      // If neither is present, we might just fall back to no filtering, but assuming one is there.
+      // Wait, offering interface only has `semester_label`. Let's check `semester` in API.
+      // We will skip strict semester filtering here if not possible, but let's try.
+    }
+    if (importYear && String(o.section_year) !== importYear) return false;
+    if (importCourse && o.course_name !== importCourse) return false;
+    if (importSection && o.section_name !== importSection) return false;
+    return true;
+  });
+
+  const handleSelectorNext = () => {
+    const offering = offerings.find(o => String(o.id) === selectedOfferingId);
+    if (offering) {
+      setSelectedOffering(offering);
+      setSelectorOpen(false);
+      setImportModalOpen(true);
+    }
+  };
 
   useEffect(() => {
     getSemestersApi().then((res) => {
@@ -188,9 +257,17 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
     <Card className="shadow-card border-border/50">
       <CardHeader className="pb-4">
         <div className="flex flex-col gap-3">
-          <CardTitle className="font-display text-base">
-            Attendance Records
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="font-display text-base">
+              Attendance Records
+            </CardTitle>
+            <Button
+              className="gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground"
+              onClick={openSelector}
+            >
+              <Upload className="w-4 h-4" /> Import Excel
+            </Button>
+          </div>
 
           {/* Filters */}
           <div className="flex flex-wrap gap-3 items-end">
@@ -431,6 +508,92 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
             </div>
           ))}
       </CardContent>
+
+      {/* Select Course Offering Dialog */}
+      <Dialog open={selectorOpen} onOpenChange={setSelectorOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg flex items-center gap-2">
+              <Upload className="w-5 h-5 text-primary" />
+              Select Class for Import
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Filter by year, semester, course, and section to find the correct class for import.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Semester</label>
+                <select value={importSemester} onChange={e => setImportSemester(e.target.value)} className="w-full border border-input rounded-md px-3 py-1.5 text-sm bg-background">
+                  <option value="">All Semesters</option>
+                  {semesters.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Year</label>
+                <select value={importYear} onChange={e => setImportYear(e.target.value)} className="w-full border border-input rounded-md px-3 py-1.5 text-sm bg-background">
+                  <option value="">All Years</option>
+                  {[1, 2, 3, 4, 5, 6].map(y => <option key={y} value={y}>Year {y}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Course</label>
+                <select value={importCourse} onChange={e => setImportCourse(e.target.value)} className="w-full border border-input rounded-md px-3 py-1.5 text-sm bg-background">
+                  <option value="">All Courses</option>
+                  {Array.from(new Set(offerings.map(o => o.course_name))).sort().map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Section</label>
+                <select value={importSection} onChange={e => setImportSection(e.target.value)} className="w-full border border-input rounded-md px-3 py-1.5 text-sm bg-background">
+                  <option value="">All Sections</option>
+                  {Array.from(new Set(offerings.map(o => o.section_name))).sort().map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-border">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Select Class
+              </label>
+              <select
+                value={selectedOfferingId}
+                onChange={(e) => setSelectedOfferingId(e.target.value)}
+                className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">-- Choose a class --</option>
+                {filteredOfferingsForImport.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.course_name} (Section {o.section_name}) - {o.teacher_name || "Unassigned"}
+                  </option>
+                ))}
+              </select>
+              {filteredOfferingsForImport.length === 0 && (
+                <p className="text-xs text-destructive">No offerings match your filters.</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectorOpen(false)}>Cancel</Button>
+            <Button disabled={!selectedOfferingId} onClick={handleSelectorNext} className="bg-primary hover:bg-primary/90">Next</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Excel Modal */}
+      {selectedOffering && (
+        <AttendanceImportModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          offering={selectedOffering}
+        />
+      )}
     </Card>
   );
 };
