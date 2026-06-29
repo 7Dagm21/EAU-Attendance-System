@@ -7,9 +7,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'sams.settings')
 django.setup()
 
 from django.contrib.auth.hashers import make_password
+from django.db.models.signals import post_save
+
 from attendance.models import (
     User,
     Programme,
+    Department,
     Course,
     AcademicYear,
     Semester,
@@ -19,7 +22,11 @@ from attendance.models import (
     CourseOffering,
     AttendanceRecord,
     Notification,
+    trigger_notifications
 )
+
+# Disconnect the notification signal during seeding so we don't spam emails/telegrams
+post_save.disconnect(trigger_notifications, sender=AttendanceRecord)
 
 print("Clearing old data...")
 AttendanceRecord.objects.all().delete()
@@ -31,6 +38,7 @@ Section.objects.all().delete()
 Semester.objects.all().delete()
 AcademicYear.objects.all().delete()
 Course.objects.all().delete()
+Department.objects.all().delete()
 Programme.objects.all().delete()
 User.objects.filter(is_superuser=False).delete()
 
@@ -51,6 +59,20 @@ prog_management = Programme.objects.create(
     name="BSc Aviation Management & Operations",
     duration_years=4,
     code="MGMT"
+)
+
+print("Creating departments...")
+dept_aero = Department.objects.create(
+    name="Aeronautical Engineering Dept",
+    programme=prog_aero
+)
+dept_maint = Department.objects.create(
+    name="Maintenance Engineering Dept",
+    programme=prog_maintenance
+)
+dept_mgmt = Department.objects.create(
+    name="Aviation Management Dept",
+    programme=prog_management
 )
 
 print("Creating academic year + semester...")
@@ -159,21 +181,21 @@ created_courses = {"aero": {}, "maint": {}, "mgmt": {}}
 
 for name, code, year, hours in aero_courses:
     c = Course.objects.create(
-        name=name, code=code, programme=prog_aero,
+        name=name, code=code, programme=prog_aero, department=dept_aero,
         year=year, total_credit_hours=hours
     )
     created_courses["aero"][(year, code)] = c
 
 for name, code, year, hours in maintenance_courses:
     c = Course.objects.create(
-        name=name, code=code, programme=prog_maintenance,
+        name=name, code=code, programme=prog_maintenance, department=dept_maint,
         year=year, total_credit_hours=hours
     )
     created_courses["maint"][(year, code)] = c
 
 for name, code, year, hours in management_courses:
     c = Course.objects.create(
-        name=name, code=code, programme=prog_management,
+        name=name, code=code, programme=prog_management, department=dept_mgmt,
         year=year, total_credit_hours=hours
     )
     created_courses["mgmt"][(year, code)] = c
@@ -238,8 +260,10 @@ offerings_mgmt = create_offerings(
     mgmt_y2s2_courses,
     sections[("mgmt", "A")],
     sections[("mgmt", "B")],
-    [teachers[4]]
+    teachers[3:]
 )
+
+print(f"DEBUG: Created {CourseOffering.objects.count()} CourseOfferings. Offering IDs: {[o.id for o in offerings_aero]}")
 
 print("Creating students...")
 ethiopian_names = [
@@ -257,7 +281,7 @@ ethiopian_names = [
 
 student_counter = 1
 
-def create_students(section, programme, count=10):
+def create_students(section, programme, department, count=10):
     global student_counter
     students = []
     for i in range(count):
@@ -272,18 +296,19 @@ def create_students(section, programme, count=10):
             parent_email=f"parent{student_counter}@gmail.com",
             parent_telegram="",
             programme=programme,
+            department=department,
         )
         Enrollment.objects.create(student=st, section=section, status="active")
         students.append(st)
         student_counter += 1
     return students
 
-aero_a_students = create_students(sections[("aero", "A")], prog_aero, 10)
-aero_b_students = create_students(sections[("aero", "B")], prog_aero, 10)
-maint_a_students = create_students(sections[("maint", "A")], prog_maintenance, 10)
-maint_b_students = create_students(sections[("maint", "B")], prog_maintenance, 10)
-mgmt_a_students = create_students(sections[("mgmt", "A")], prog_management, 10)
-mgmt_b_students = create_students(sections[("mgmt", "B")], prog_management, 10)
+aero_a_students = create_students(sections[("aero", "A")], prog_aero, dept_aero, 10)
+aero_b_students = create_students(sections[("aero", "B")], prog_aero, dept_aero, 10)
+maint_a_students = create_students(sections[("maint", "A")], prog_maintenance, dept_maint, 10)
+maint_b_students = create_students(sections[("maint", "B")], prog_maintenance, dept_maint, 10)
+mgmt_a_students = create_students(sections[("mgmt", "A")], prog_management, dept_mgmt, 10)
+mgmt_b_students = create_students(sections[("mgmt", "B")], prog_management, dept_mgmt, 10)
 
 print("Creating attendance records...")
 

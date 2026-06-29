@@ -10,7 +10,7 @@ def send_attendance_alert(attendance_record):
     student = attendance_record.student
     course_name = attendance_record.course_offering.course.name
     parent_email = student.parent_email
-    parent_telegram_id = student.parent_telegram
+    parent_telegram_id = student.parent_telegram_chat_id
     
     # Using student.first_name + last_name since 'full_name' might not be a field
     # If your model has a full_name property, you can change this back.
@@ -46,7 +46,7 @@ def send_attendance_alert(attendance_record):
     # 2. Send Telegram via Bot API
     if parent_telegram_id:
         # It uses your new token from your .env or the hardcoded fallback
-        token = config('TELEGRAM_BOT_TOKEN', default='8474266701:AAEjsXjHQUuAU8kmKRST1JkSMsCVwlpAT7Y')
+        token = config('TELEGRAM_BOT_TOKEN', default='8686617227:AAHOlrg0Ohe6fkPhFwiRGYb7ui4jHFTQrPo')
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         
         # Note: parent_telegram_id must be a numeric ID (e.g. 12345678)

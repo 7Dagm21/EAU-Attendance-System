@@ -122,6 +122,33 @@ def send_threshold_warning(student, course, attended_hours, minimum_hours):
         f"Dear Parent/Guardian of {student.full_name}"
     ))
 
+    # Send telegram to parent
+    if student.parent_telegram_chat_id:
+        import requests
+        from decouple import config
+        token = config('TELEGRAM_BOT_TOKEN', default='8686617227:AAHOlrg0Ohe6fkPhFwiRGYb7ui4jHFTQrPo')
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        
+        telegram_message = (
+            f"Dear Parent/Guardian,\n\n"
+            f"This is an automated warning from EAU Attendance System.\n\n"
+            f"Student: {student.full_name} ({student.student_id})\n"
+            f"Course: {course.name}\n"
+            f"Current Attendance: {percentage}%\n"
+            f"Minimum Required: {minimum_hours} hours\n\n"
+            f"Please ensure the student attends all upcoming classes to maintain eligibility."
+        )
+        
+        payload = {
+            'chat_id': student.parent_telegram_chat_id,
+            'text': f"⚠️ *{subject}*\n\n{telegram_message}",
+            'parse_mode': 'Markdown'
+        }
+        try:
+            requests.post(url, data=payload)
+        except Exception as e:
+            print(f"DEBUG: Telegram connection failed: {e}")
+
 def send_account_created_email(user, plain_password, portal_url=None):
     """Send a welcome email containing login credentials for a newly
     created staff account (teacher, dept head, dean, or admin)."""

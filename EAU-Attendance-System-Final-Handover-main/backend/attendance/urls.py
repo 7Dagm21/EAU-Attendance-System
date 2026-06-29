@@ -59,6 +59,7 @@ urlpatterns = [
     path('attendance/template/<int:offering_id>/',  views_excel.AttendanceTemplateView.as_view()),
     path('attendance/import/',                      views_excel.AttendanceImportView.as_view()),
     path('attendance/bulk-send-template/',          views_excel.BulkTemplateSendView.as_view()),
+    path('telegram-webhook/',                       views.TelegramWebhookView.as_view()),
     path('teacher-monitoring/',                     views_excel.TeacherMonitoringView.as_view()),
 
     # ── Dashboard ─────────────────────────────────────

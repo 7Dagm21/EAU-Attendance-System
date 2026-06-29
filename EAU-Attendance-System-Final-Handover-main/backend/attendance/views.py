@@ -2228,3 +2228,53 @@ class SummaryReportView(APIView):
             response['Content-Disposition'] = 'attachment; filename="attendance_summary_overview.pdf"'
             return response
         return Response(payload)
+
+class TelegramWebhookView(APIView):
+    """
+    Handles incoming webhook requests from the Telegram bot.
+    """
+    permission_classes = []  # No authentication required since it's called by Telegram
+    
+    def post(self, request):
+        data = request.data
+        if 'message' in data:
+            message = data['message']
+            chat_id = message.get('chat', {}).get('id')
+            text = message.get('text', '').strip()
+            from_user = message.get('from', {})
+            username = from_user.get('username')
+
+            if text.startswith('/start'):
+                # Handle /start command
+                if not username:
+                    self.send_telegram_message(chat_id, "Welcome! To link your account, you must set a Telegram username in your Telegram settings, and ensure the admin has registered it.")
+                    return Response({"status": "ok"})
+                
+                # Check if this username exists in our DB
+                # Users might have registered with or without the '@' symbol
+                students = Student.objects.filter(
+                    models.Q(parent_telegram__iexact=username) | 
+                    models.Q(parent_telegram__iexact=f"@{username}")
+                )
+                
+                if students.exists():
+                    students.update(parent_telegram_chat_id=str(chat_id))
+                    self.send_telegram_message(chat_id, f"Welcome @{username}! Your account has been successfully linked. You will now receive attendance notifications here.")
+                else:
+                    self.send_telegram_message(chat_id, f"Welcome! We couldn't find a student record linked to your username (@{username}). Please ask the administration to register your Telegram username.")
+        
+        return Response({"status": "ok"})
+        
+    def send_telegram_message(self, chat_id, text):
+        import requests
+        from decouple import config
+        token = config('TELEGRAM_BOT_TOKEN', default='8686617227:AAHOlrg0Ohe6fkPhFwiRGYb7ui4jHFTQrPo')
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': text
+        }
+        try:
+            requests.post(url, data=payload)
+        except Exception as e:
+            print(f"Error sending telegram message: {e}")
