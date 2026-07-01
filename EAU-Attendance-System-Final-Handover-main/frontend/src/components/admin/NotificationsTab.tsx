@@ -55,7 +55,21 @@ const NotificationsTab = ({ notifications, onMarkRead }: NotificationsTabProps) 
               </button>
             )}
             <button
-              onClick={() => toast.info("Bulk warning sent!")}
+              onClick={async () => {
+                const absenceIds = notifications.filter(n => n.notification_type === 'absence').map(n => n.id);
+                if (absenceIds.length === 0) {
+                  toast.info("No absence notifications to send.");
+                  return;
+                }
+                const toastId = toast.loading("Dispatching bulk absence alerts...");
+                try {
+                  const { sendBulkAbsenceNotificationsApi } = await import('@/api/axios');
+                  await sendBulkAbsenceNotificationsApi({ notification_ids: absenceIds });
+                  toast.success(`Successfully dispatched absence alerts for ${absenceIds.length} notifications!`, { id: toastId });
+                } catch (e) {
+                  toast.error("Failed to send bulk absence alerts.", { id: toastId });
+                }
+              }}
               className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
             >
               <Send className="w-3.5 h-3.5" /> Send Bulk Warning

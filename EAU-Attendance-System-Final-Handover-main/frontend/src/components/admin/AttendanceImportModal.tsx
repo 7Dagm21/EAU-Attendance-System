@@ -172,6 +172,15 @@ const AttendanceImportModal = ({
     try {
       const res = await submitAttendanceImportApi(file);
       setResult(res.data);
+      if (res.data?.semester_id) {
+        sessionStorage.setItem("last_imported_semester_id", String(res.data.semester_id));
+        localStorage.removeItem("last_imported_semester_id");
+        window.dispatchEvent(
+          new CustomEvent("attendance-imported", {
+            detail: { semesterId: res.data.semester_id },
+          }),
+        );
+      }
       setStep("done");
       toast.success(res.data.message);
     } catch (e: any) {

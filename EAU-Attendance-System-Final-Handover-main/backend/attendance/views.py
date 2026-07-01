@@ -28,7 +28,12 @@ from .serializers import (
     AttendanceRecordSerializer, AttendanceSubmitSerializer,
     NotificationSerializer, SystemSettingsSerializer
 )
-from .utils import send_absence_alert, send_threshold_warning, send_account_created_email
+from .utils import (
+    calculate_attendance_status,
+    send_absence_alert,
+    send_attendance_status_warning,
+    send_account_created_email,
+)
 from .reports import (
     generate_course_pdf,
     generate_course_csv, generate_student_pdf, generate_student_csv,
@@ -151,6 +156,77 @@ def parse_report_date(value):
         return datetime.date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def count_expected_sessions(offering, cutoff_date=None):
+    """Count scheduled class sessions that have occurred up to cutoff_date."""
+    cutoff_date = cutoff_date or date.today()
+    semester_start = offering.section.semester.start_date
+    semester_end = min(cutoff_date, offering.section.semester.end_date)
+    if semester_end < semester_start:
+        return 0
+
+    imported_sessions = AttendanceRecord.objects.filter(
+        course_offering=offering,
+        date__lte=semester_end,
+    ).values('date').distinct().count()
+    if imported_sessions:
+        return imported_sessions
+
+    schedule_slots = list(
+        TeachingSchedule.objects.filter(course_offering=offering)
+        .values_list('day_of_week', 'start_time')
+    )
+    if not schedule_slots:
+        return AttendanceRecord.objects.filter(
+            course_offering=offering,
+            date__lte=semester_end,
+        ).values('date', 'session_type').distinct().count()
+
+    total = 0
+    current = semester_start
+    while current <= semester_end:
+        weekday = current.weekday()
+        total += sum(1 for day_of_week, _ in schedule_slots if day_of_week == weekday)
+        current += timedelta(days=1)
+    return total
+
+
+def get_session_attendance_summary(offering, student, cutoff_date=None):
+    """Return session-based attendance stats for one student/offering."""
+    cutoff_date = cutoff_date or date.today()
+    records = AttendanceRecord.objects.filter(
+        student=student,
+        course_offering=offering,
+        date__lte=cutoff_date,
+    )
+
+    def count_sessions_for_status(*statuses):
+        return records.filter(status__in=statuses).values('date').distinct().count()
+
+    present_sessions = count_sessions_for_status('present')
+    late_sessions = count_sessions_for_status('late')
+    absent_sessions = count_sessions_for_status('absent')
+    excused_sessions = count_sessions_for_status('excused')
+
+    attended_sessions = present_sessions + late_sessions
+    relevant_sessions = attended_sessions + absent_sessions
+    expected_sessions = count_expected_sessions(offering, cutoff_date)
+    effective_sessions = max(expected_sessions - excused_sessions, 1)
+    attendance_pct = round(attended_sessions / effective_sessions * 100, 1)
+
+    return {
+        'present_sessions': present_sessions,
+        'late_sessions': late_sessions,
+        'absent_sessions': absent_sessions,
+        'excused_sessions': excused_sessions,
+        'attended_sessions': attended_sessions,
+        'relevant_sessions': relevant_sessions,
+        'expected_sessions': expected_sessions,
+        'effective_sessions': effective_sessions,
+        'attendance_pct': attendance_pct,
+        'gate_open': relevant_sessions >= expected_sessions * ACTIVATION_THRESHOLD,
+    }
 
 
 def build_summary_payload(user, params):
@@ -1582,6 +1658,7 @@ class AttendanceSubmitView(APIView):
                 self._handle_absence(student, offering, data['date'], teacher)
             elif status_val == 'excused':
                 self._handle_excused(student, offering, data['date'], teacher, comment_val)
+            self._check_threshold(student, offering, teacher)
 
         section_label = f"Sec {offering.section.name} Y{offering.section.year}"
         absent_count  = len(absent_students)
@@ -1623,7 +1700,6 @@ class AttendanceSubmitView(APIView):
             send_absence_alert(student, offering.course, att_date)
         except Exception:
             pass
-        self._check_threshold(student, offering, teacher)
 
     def _handle_excused(self, student, offering, att_date, teacher, comment):
         teacher_name = (f"{teacher.first_name} {teacher.last_name}".strip() or teacher.username)
@@ -1645,48 +1721,33 @@ class AttendanceSubmitView(APIView):
         warning_thr    = float(settings_obj.warning_threshold)
         teacher_name   = (f"{teacher.first_name} {teacher.last_name}".strip()
                           or teacher.username)
-        records   = AttendanceRecord.objects.filter(
-            student=student, course_offering=offering)
-        present_h = records.filter(status='present').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-        late_h    = records.filter(status='late').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-        absent_h  = records.filter(status='absent').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-        excused_h = records.filter(status='excused').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-        total_logged = present_h + late_h + absent_h  # excused excluded
-        if total_logged == 0:
+        summary = calculate_attendance_status(student, offering)
+        if not summary:
             return
 
-        # 4-session grace period: only calculate at-risk if at least 4 sessions have been taught
-        distinct_dates = AttendanceRecord.objects.filter(
-            course_offering=offering
-        ).values('date').distinct().count()
-        if distinct_dates < 4:
-            return
-
-        total_credit    = Decimal(str(offering.course.total_credit_hours))
-        effective_credit = max(total_credit - excused_h, Decimal('1'))
-        if not is_gate_open(total_logged, total_credit):
-            return
-        late_count_thresh = records.filter(status='late').count()
-        earned, pct = calc_attendance(present_h, late_h, effective_credit, late_count_thresh)
-        minimum = offering.course.minimum_required_hours
-        if pct < at_risk_thr:
-            level, notif_type = "AT RISK", 'threshold'
-        elif pct < warning_thr:
-            level, notif_type = "WARNING", 'threshold'
+        if summary['projected_final_percentage'] < warning_thr:
+            level, status_label = "CANNOT SIT FINAL EXAM", 'cannot_sit_final'
+        elif summary['current_percentage'] < warning_thr:
+            level, status_label = "AT RISK", 'at_risk'
         else:
             return
         message = (
-            f"{level}: {student.full_name} (ID: {student.student_id}) attendance in "
-            f"{offering.course.name} is now {pct}% "
-            f"({float(earned):.1f} hrs attended). Minimum required: {float(minimum):.0f} hrs."
+            f"{level}: {student.full_name} (ID: {student.student_id}) in {offering.course.name} "
+            f"has current attendance {summary['current_percentage']}% and projected final attendance "
+            f"{summary['projected_final_percentage']}%."
         )
         Notification.objects.create(
-            recipient=teacher, notification_type=notif_type, message=message)
+            recipient=teacher, notification_type='threshold', message=message)
         notify_elevated(
-            notif_type, f"{message} Logged by {teacher_name}.",
+            'threshold', f"{message} Logged by {teacher_name}.",
             programme=offering.course.programme)
         try:
-            send_threshold_warning(student, offering.course, earned, minimum)
+            send_attendance_status_warning(
+                student,
+                offering.course,
+                summary,
+                status_label,
+            )
         except Exception:
             pass
 
@@ -1718,22 +1779,18 @@ class AtRiskView(APIView):
             ).select_related('student')
             for e in enrollments:
                 student  = e.student
-                records  = AttendanceRecord.objects.filter(
-                    student=student, course_offering=offering)
-                present_h = records.filter(status='present').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-                late_h    = records.filter(status='late').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-                absent_h  = records.filter(status='absent').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-                excused_h = records.filter(status='excused').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-                total_logged = present_h + late_h + absent_h  # excused excluded
-                if total_logged == 0:
+                summary = calculate_attendance_status(student, offering)
+                if not summary:
                     continue
-                total_credit    = Decimal(str(offering.course.total_credit_hours))
-                effective_credit = max(total_credit - excused_h, Decimal('1'))
-                if not is_gate_open(total_logged, total_credit):
+                if summary['projected_final_percentage'] < warning_thr:
+                    risk_status = 'cannot_sit_final'
+                    display_status = 'Cannot Sit Final Exam'
+                elif summary['current_percentage'] < warning_thr:
+                    risk_status = 'at_risk'
+                    display_status = 'At Risk'
+                else:
                     continue
-                late_count_atrisk = records.filter(status='late').count()
-                earned, pct = calc_attendance(present_h, late_h, effective_credit, late_count_atrisk)
-                if pct < warning_thr:
+                if risk_status:
                     at_risk.append({
                         'student_pk':          student.id,
                         'offering_id':         offering.id,
@@ -1744,9 +1801,12 @@ class AtRiskView(APIView):
                                                 if offering.course.department else '—'),
                         'section':             offering.section.name,
                         'programme':           offering.section.programme.name,
-                        'attended_hours':      float(present_h + late_h),
-                        'missed_hours':        float(absent_h),
-                        'attendance_percentage': pct,
+                        'attended_hours':      summary['earned_hours'],
+                        'missed_hours':        max(summary['classes_held_hours'] - summary['earned_hours'], 0),
+                        'attendance_percentage': summary['current_percentage'],
+                        'projected_final_percentage': summary['projected_final_percentage'],
+                        'risk_status':         risk_status,
+                        'display_status':      display_status,
                         'minimum_required':    float(offering.course.minimum_required_hours),
                     })
         return Response({'count': len(at_risk), 'students': at_risk})
@@ -1771,36 +1831,75 @@ class AtRiskNotifyView(APIView):
             try:
                 student = Student.objects.get(id=student_pk)
                 offering = CourseOffering.objects.get(id=offering_id)
-                
-                # Fetch recent attendance state to send accurate warning
-                records = AttendanceRecord.objects.filter(student=student, course_offering=offering)
-                present_h = records.filter(status='present').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-                late_h    = records.filter(status='late').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-                excused_h = records.filter(status='excused').aggregate(total=Sum('hours_attended'))['total'] or Decimal('0')
-                
-                total_credit    = Decimal(str(offering.course.total_credit_hours))
-                effective_credit = max(total_credit - excused_h, Decimal('1'))
-                late_count_atrisk = records.filter(status='late').count()
-                
-                earned, pct = calc_attendance(present_h, late_h, effective_credit, late_count_atrisk)
-                minimum = float(offering.course.minimum_required_hours)
-                
-                # Send email to student & parent
-                send_threshold_warning(student, offering.course, earned, minimum)
+                summary = calculate_attendance_status(student, offering)
+                if not summary:
+                    continue
+                if summary['projected_final_percentage'] < 85.0:
+                    status_label = 'cannot_sit_final'
+                elif summary['current_percentage'] < 85.0:
+                    status_label = 'at_risk'
+                else:
+                    continue
+
+                send_attendance_status_warning(student, offering.course, summary, status_label)
                 sent_count += 1
                 
                 # Notify the teacher in-app
                 if offering.teacher:
                     Notification.objects.create(
                         recipient=offering.teacher,
-                        notification_type='at_risk_warning',
-                        message=f"Admin manually dispatched an At-Risk warning to {student.full_name} for {offering.course.name}."
+                        notification_type='threshold',
+                        message=f"Admin manually dispatched an attendance warning to {student.full_name} for {offering.course.name}."
                     )
             except Exception as e:
                 print(f"Failed to notify student_pk={student_pk}, offering_id={offering_id}: {e}")
                 continue
 
         return Response({'message': f'Successfully notified {sent_count} student(s)'})
+
+class NotificationBulkAbsenceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not is_elevated(request.user):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        
+        notification_ids = request.data.get('notification_ids', [])
+        if not notification_ids:
+            return Response({'error': 'No notification IDs provided'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        notifications = Notification.objects.filter(id__in=notification_ids, notification_type='absence')
+        
+        sent_count = 0
+        import re
+        from .utils import send_absence_alert
+        
+        for notif in notifications:
+            # Parse student ID and course/date from message: 
+            # e.g., "John Doe (ID: 123) was absent in Math on 2023-10-01 (imported)."
+            id_match = re.search(r'\(ID:\s*(.*?)\)', notif.message)
+            course_match = re.search(r'absent in\s*(.*?)\s*on', notif.message)
+            date_match = re.search(r'on\s*([0-9]{4}-[0-9]{2}-[0-9]{2})', notif.message)
+            
+            if id_match and course_match and date_match:
+                student_id = id_match.group(1).strip()
+                course_name = course_match.group(1).strip()
+                date_str = date_match.group(1).strip()
+                
+                try:
+                    student = Student.objects.get(student_id=student_id)
+                    # We create a dummy course object to pass to send_absence_alert
+                    class DummyCourse:
+                        pass
+                    dummy_course = DummyCourse()
+                    dummy_course.name = course_name
+                    
+                    send_absence_alert(student, dummy_course, date_str)
+                    sent_count += 1
+                except Exception as e:
+                    print(f"Failed to send bulk absence for {student_id}: {e}")
+                    
+        return Response({'message': f'Successfully dispatched {sent_count} absence alerts.'})
 
 
 # ─────────────────────────────────────────

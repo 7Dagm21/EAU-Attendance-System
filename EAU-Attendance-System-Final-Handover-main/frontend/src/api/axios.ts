@@ -287,6 +287,7 @@ export const deleteUserApi = (id: number) => api.delete(`/users/${id}/`);
 export const getNotificationsApi = () => api.get("/notifications/");
 export const markNotificationReadApi = (id: number) =>
   api.post(`/notifications/${id}/read/`);
+export const sendBulkAbsenceNotificationsApi = (data: { notification_ids: number[] }) => api.post('/notifications/bulk-absence/', data);
 
 // ── Settings ──────────────────────────────────────────────────
 export const getSettingsApi = () => api.get("/settings/");

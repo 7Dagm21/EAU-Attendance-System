@@ -2,7 +2,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, Send, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
-import { getAtRiskApi, sendAtRiskNotificationsApi } from "@/api/axios";
+import { getAtRiskApi, getSemestersApi, sendAtRiskNotificationsApi } from "@/api/axios";
+
+interface SemesterOption {
+  id: number;
+  label: string;
+  is_current?: boolean;
+}
 
 interface AtRiskStudent {
   student_pk: number;
@@ -15,6 +21,9 @@ interface AtRiskStudent {
   attended_hours: number;
   missed_hours: number;
   attendance_percentage: number;
+  projected_final_percentage?: number;
+  risk_status?: "at_risk" | "cannot_sit_final";
+  display_status?: string;
   minimum_required: number;
 }
 
@@ -26,16 +35,48 @@ interface AtRiskTableProps {
 
 const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskTableProps) => {
   const [students, setStudents] = useState<AtRiskStudent[]>([]);
+  const [semesters, setSemesters] = useState<SemesterOption[]>([]);
+  const [selectedSemesterId, setSelectedSemesterId] = useState<string>(semesterId ? String(semesterId) : "");
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+
+  useEffect(() => {
+    setSelectedSemesterId(semesterId ? String(semesterId) : "");
+  }, [semesterId]);
+
+  useEffect(() => {
+    const handleImported = (event: Event) => {
+      const customEvent = event as CustomEvent<{ semesterId?: number }>;
+      if (customEvent.detail?.semesterId) {
+        setSelectedSemesterId(String(customEvent.detail.semesterId));
+      }
+    };
+
+    window.addEventListener("attendance-imported", handleImported);
+    return () => window.removeEventListener("attendance-imported", handleImported);
+  }, []);
+
+  useEffect(() => {
+    const fetchSemesters = async () => {
+      try {
+        const res = await getSemestersApi();
+        const list = Array.isArray(res.data) ? res.data : [];
+        setSemesters(list);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    fetchSemesters();
+  }, []);
 
   useEffect(() => {
     const fetchAtRisk = async () => {
       try {
         setLoading(true);
         const params: Record<string, any> = { ...scopeParams };
-        if (semesterId) params.semester = semesterId;
+        const semesterFilter = selectedSemesterId ? Number(selectedSemesterId) : semesterId;
+        if (semesterFilter) params.semester = semesterFilter;
         const res = await getAtRiskApi(params);
         setStudents(res.data.students || []);
       } catch (e) {
@@ -45,7 +86,7 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
       }
     };
     fetchAtRisk();
-  }, [semesterId, JSON.stringify(scopeParams)]);
+  }, [semesterId, selectedSemesterId, JSON.stringify(scopeParams)]);
 
   const filteredStudents = students.filter((s) => {
     const q = searchQuery.trim().toLowerCase();
@@ -54,9 +95,13 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
       s.student_name.toLowerCase().includes(q) ||
       s.student_id.toLowerCase().includes(q) ||
       s.course_name.toLowerCase().includes(q);
-    const pct = s.attendance_percentage;
-    const status =
-      pct < 75 ? "at-risk" : pct < 85 ? "warning" : "safe";
+    const status = s.risk_status === "cannot_sit_final"
+      ? "cannot-sit-final"
+      : s.risk_status === "at_risk"
+        ? "at-risk"
+        : s.attendance_percentage < 85
+          ? "at-risk"
+          : "safe";
     const matchesStatus = filterStatus === "all" || status === filterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -117,6 +162,22 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
           <Send className="w-3.5 h-3.5" /> Bulk Notify
         </button>
       </CardHeader>
+      <div className="px-4 pb-3 flex flex-wrap gap-3 items-center">
+        <label className="text-xs text-muted-foreground whitespace-nowrap">
+          Semester
+        </label>
+        <select
+          value={selectedSemesterId}
+          onChange={(e) => setSelectedSemesterId(e.target.value)}
+          className="py-1.5 px-3 text-sm border border-input rounded-lg bg-background outline-none focus:ring-2 focus:ring-ring min-w-[220px]"
+        >
+          {semesters.map((semester) => (
+            <option key={semester.id} value={semester.id}>
+              {semester.label}{semester.is_current ? " (current)" : ""}
+            </option>
+          ))}
+        </select>
+      </div>
       {/* Search + filter bar */}
       <div className="px-4 pb-3 pt-2 border-b border-border flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-[160px]">
@@ -142,8 +203,8 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
           className="py-1.5 px-3 text-sm border border-input rounded-lg bg-background outline-none focus:ring-2 focus:ring-ring"
         >
           <option value="all">All statuses</option>
-          <option value="at-risk">At Risk (&lt;75%)</option>
-          <option value="warning">Warning (&lt;85%)</option>
+          <option value="at-risk">At Risk</option>
+          <option value="cannot-sit-final">Cannot Sit Final Exam</option>
         </select>
         <span className="text-xs text-muted-foreground ml-auto">
           {filteredStudents.length} student{filteredStudents.length !== 1 ? "s" : ""}
@@ -193,7 +254,9 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
             )}
             {display.map((s, i) => {
               const pct = s.attendance_percentage;
-              const isAtRisk = pct < 85;
+              const projectedPct = s.projected_final_percentage ?? pct;
+              const isBlocked = s.risk_status === "cannot_sit_final";
+              const statusLabel = s.display_status || (isBlocked ? "Cannot Sit Final Exam" : "At Risk");
               return (
                 <tr
                   key={`${s.student_id}-${i}`}
@@ -215,12 +278,15 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
                     <div className="flex items-center gap-2">
                       <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
                         <div
-                          className={`h-full rounded-full ${isAtRisk ? "bg-destructive" : "bg-secondary"}`}
+                          className={`h-full rounded-full ${isBlocked ? "bg-destructive" : "bg-secondary"}`}
                           style={{ width: `${Math.min(100, pct)}%` }}
                         />
                       </div>
                       <span className="text-xs font-medium">{pct}%</span>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Best possible final: {projectedPct}%
+                    </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Min: {s.minimum_required} hrs
                     </p>
@@ -228,12 +294,12 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
                   <td className="px-6 py-4">
                     <span
                       className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                        isAtRisk
+                        isBlocked
                           ? "bg-destructive text-destructive-foreground"
                           : "bg-secondary text-secondary-foreground"
                       }`}
                     >
-                      {isAtRisk ? "At Risk" : "Warning"}
+                      {statusLabel}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">

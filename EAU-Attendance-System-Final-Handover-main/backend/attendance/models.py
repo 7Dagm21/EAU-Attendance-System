@@ -345,10 +345,10 @@ class SystemSettings(models.Model):
     threshold_warnings_enabled = models.BooleanField(default=True)
     weekly_reports_enabled = models.BooleanField(default=False)
     at_risk_threshold = models.DecimalField(
-        max_digits=5, decimal_places=1, default=Decimal('85.0')
+        max_digits=5, decimal_places=1, default=Decimal('75.0')
     )
     warning_threshold = models.DecimalField(
-        max_digits=5, decimal_places=1, default=Decimal('90.0')
+        max_digits=5, decimal_places=1, default=Decimal('85.0')
     )
 
     @classmethod

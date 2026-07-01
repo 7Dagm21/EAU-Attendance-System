@@ -32,7 +32,11 @@ from .models import (
     CourseOffering, Enrollment, Student,
     AttendanceRecord, SystemSettings
 )
-from .utils import send_absence_alert, send_threshold_warning
+from .utils import (
+    calculate_attendance_status,
+    send_absence_alert,
+    send_attendance_status_warning,
+)
 
 # ── colours ───────────────────────────────────────────────────────────────────
 C_HEADER_BG  = "1A4A0F"   # dark green  — locked header cells
@@ -399,6 +403,8 @@ class AttendanceImportView(APIView):
             return Response({'error': 'Course offering not found'},
                             status=status.HTTP_404_NOT_FOUND)
 
+        warning_threshold = float(SystemSettings.get().warning_threshold)
+
         ws = wb['Attendance']
 
         # Parse rows
@@ -461,7 +467,7 @@ class AttendanceImportView(APIView):
                     'date':         att_date,
                     'status':       normalized,
                     'session_type': session_type,
-                    'hours':        Decimal(str(hours)) if normalized in ('present', 'late') else Decimal('0'),
+                    'hours':        Decimal(str(hours)),
                 })
 
         # If preview only — return parsed data without saving
@@ -521,8 +527,31 @@ class AttendanceImportView(APIView):
                         f"{offering.course.name} on {r['date']} (imported). By {teacher_name}.",
                         programme=offering.course.programme,
                     )
-                except Exception:
-                    pass
+                    # Get student instance to send alert
+                    student_obj = Student.objects.get(student_id=r['student_id'])
+                    send_absence_alert(student_obj, offering.course, r['date'])
+                except Exception as e:
+                    print(f"Error sending absence alert for {r['student_id']}: {e}")
+
+            summary = calculate_attendance_status(r['student'], offering, cutoff_date=r['date'])
+            if summary:
+                if summary['projected_final_percentage'] < warning_threshold:
+                    status_label = 'cannot_sit_final'
+                elif summary['current_percentage'] < warning_threshold:
+                    status_label = 'at_risk'
+                else:
+                    status_label = None
+
+                if status_label:
+                    try:
+                        send_attendance_status_warning(
+                            r['student'],
+                            offering.course,
+                            summary,
+                            status_label,
+                        )
+                    except Exception as e:
+                        print(f"Error sending threshold warning for {r['student_id']}: {e}")
 
         return Response({
             'message':       f'{created_count} records created, {updated_count} updated.',
@@ -531,6 +560,9 @@ class AttendanceImportView(APIView):
             'skipped':       len(skipped),
             'errors':        errors,
             'error_count':   len(errors),
+            'semester_id':   offering.section.semester_id,
+            'semester_label': str(offering.section.semester),
+            'offering_id':    offering.id,
         }, status=status.HTTP_201_CREATED)
 
 class TeacherMonitoringView(APIView):

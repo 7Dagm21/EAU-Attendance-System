@@ -2,6 +2,7 @@ from . import views_excel
 from django.urls import path
 from . import views
 from rest_framework_simplejwt.views import TokenRefreshView
+from .telegram_webhook import telegram_webhook
 
 urlpatterns = [
     # ── Auth ──────────────────────────────────────────
@@ -59,13 +60,14 @@ urlpatterns = [
     path('attendance/template/<int:offering_id>/',  views_excel.AttendanceTemplateView.as_view()),
     path('attendance/import/',                      views_excel.AttendanceImportView.as_view()),
     path('attendance/bulk-send-template/',          views_excel.BulkTemplateSendView.as_view()),
-    path('telegram-webhook/',                       views.TelegramWebhookView.as_view()),
+    path('telegram-webhook/',                       views.TelegramWebhookView.as_view(), name='telegram_webhook'),
     path('teacher-monitoring/',                     views_excel.TeacherMonitoringView.as_view()),
 
     # ── Dashboard ─────────────────────────────────────
     path('stats/',    views.StatsView.as_view()),
     path('at-risk/',  views.AtRiskView.as_view()),
     path('at-risk/notify/', views.AtRiskNotifyView.as_view()),
+    path('notifications/bulk-absence/', views.NotificationBulkAbsenceView.as_view()),
 
     # ── Users ─────────────────────────────────────────
     path('users/',                 views.UserListView.as_view()),

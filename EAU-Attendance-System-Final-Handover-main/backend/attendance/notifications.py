@@ -13,6 +13,7 @@ def send_attendance_alert(attendance_record):
     parent_telegram_id = student.parent_telegram_chat_id
     
     # Using student.first_name + last_name since 'full_name' might not be a field
+    #
     # If your model has a full_name property, you can change this back.
     student_display_name = f"{student.first_name} {student.last_name}"
     
