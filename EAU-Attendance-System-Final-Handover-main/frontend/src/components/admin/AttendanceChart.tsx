@@ -155,8 +155,10 @@ const DrillDownModal = ({
 // ── Main component ────────────────────────────────────────────────────────────
 const AttendanceChart = ({
   onDataFetched,
+  onSemesterChange,
 }: {
   onDataFetched?: (totals: { present: number; late: number; excused: number; absent: number }) => void;
+  onSemesterChange?: (semesterId: number) => void;
 } = {}) => {
   const [chartData, setChartData] = useState<any[]>([]);
   // rawRecords: offeringId → attendance records (kept for drill-down)
@@ -205,7 +207,10 @@ const AttendanceChart = ({
         const sems = semRes.data || [];
         setSemesters(sems);
         const current = sems.find((s: Semester) => s.is_current);
-        if (current) setFilterSemester(String(current.id));
+        if (current) {
+          setFilterSemester(String(current.id));
+          if (onSemesterChange) onSemesterChange(current.id);
+        }
       },
     );
   }, []);
@@ -444,7 +449,10 @@ const AttendanceChart = ({
             <div className="flex gap-2 flex-wrap items-center">
               <select
                 value={filterSemester}
-                onChange={(e) => setFilterSemester(e.target.value)}
+                onChange={(e) => {
+                  setFilterSemester(e.target.value);
+                  if (onSemesterChange) onSemesterChange(parseInt(e.target.value));
+                }}
                 className="border border-input rounded-lg px-2 py-1 text-xs bg-background outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="">All Semesters</option>

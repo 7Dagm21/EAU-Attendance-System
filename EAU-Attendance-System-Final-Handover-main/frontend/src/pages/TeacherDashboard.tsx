@@ -308,33 +308,54 @@ const TeacherDashboard = () => {
             </div>
 
             {currentOffering && (
-              <div className="mt-4 p-3 rounded-lg bg-muted/40 border border-border flex flex-wrap gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground text-xs uppercase tracking-wide">School</span>
-                  <p className="font-medium">{currentOffering.programme_name}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground text-xs uppercase tracking-wide">Section</span>
-                  <p className="font-medium">
-                    Section {currentOffering.section_name} · Year {currentOffering.section_year}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground text-xs uppercase tracking-wide">Course Code</span>
-                  <p className="font-medium">{currentOffering.course_code || "—"}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground text-xs uppercase tracking-wide">Credit Hours</span>
-                  <p className="font-medium">{currentOffering.total_credit_hours} hrs</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground text-xs uppercase tracking-wide">Semester</span>
-                  <p className="font-medium">{currentOffering.semester_label}</p>
+              <div className="mt-4 p-4 rounded-lg bg-muted/40 border border-border flex flex-col md:flex-row md:items-center justify-between gap-4 text-sm">
+                <div className="flex flex-wrap gap-6">
+                  <div>
+                    <span className="text-muted-foreground text-xs uppercase tracking-wide">School</span>
+                    <p className="font-medium">{currentOffering.programme_name}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs uppercase tracking-wide">Section</span>
+                    <p className="font-medium">
+                      Section {currentOffering.section_name} · Year {currentOffering.section_year}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs uppercase tracking-wide">Course Code</span>
+                    <p className="font-medium">{currentOffering.course_code || "—"}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs uppercase tracking-wide">Credit Hours</span>
+                    <p className="font-medium">{currentOffering.total_credit_hours} hrs</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs uppercase tracking-wide">Semester</span>
+                    <p className="font-medium">{currentOffering.semester_label}</p>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Action buttons removed. Admin handles Excel attendance import. */}
+            {/* Action Buttons */}
+            {currentOffering && (
+              <div className="mt-6 flex flex-wrap gap-3 justify-end border-t border-border/50 pt-4">
+                <Button
+                  onClick={() => setImportOpen(true)}
+                  variant="outline"
+                  className="gap-2 flex-1 sm:flex-none border-border"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Import Excel
+                </Button>
+                <Button
+                  onClick={() => setDialogOpen(true)}
+                  className="bg-green-600 hover:bg-green-700 text-white gap-2 flex-1 sm:flex-none shadow-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  Log Attendance
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -515,7 +536,127 @@ const TeacherDashboard = () => {
         )}
       </main>
 
+      {/* Log Attendance Modal */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex flex-row items-center justify-between">
+            <DialogTitle className="font-display">Log Attendance</DialogTitle>
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-full border">
+              <Clock className="w-4 h-4 text-primary" />
+              {liveTime}
+            </div>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto pr-2">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="flex-1">
+                <label className="text-xs font-semibold uppercase text-muted-foreground mb-1 block">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={attendanceDate}
+                  onChange={(e) => setAttendanceDate(e.target.value)}
+                  className="w-full border border-input rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </div>
+            
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Student</TableHead>
+                  <TableHead className="w-[300px]">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {students.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="font-medium text-sm">{s.full_name}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        {(["present", "late", "excused", "absent"] as AttendanceStatus[]).map(
+                          (status) => (
+                            <button
+                              key={status}
+                              onClick={() =>
+                                setAttendanceMap((prev) => ({ ...prev, [s.id]: status }))
+                              }
+                              className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                                attendanceMap[s.id] === status
+                                  ? status === "present"
+                                    ? "bg-green-100 text-green-700 border-green-300"
+                                    : status === "late"
+                                      ? "bg-yellow-100 text-yellow-700 border-yellow-300"
+                                      : status === "excused"
+                                        ? "bg-blue-100 text-blue-700 border-blue-300"
+                                        : "bg-red-100 text-red-700 border-red-300"
+                                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+                              }`}
+                            >
+                              {statusLabels[status]}
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {students.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={2} className="text-center text-muted-foreground py-8">
+                      No students found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="pt-4 border-t border-border flex justify-end gap-3 mt-auto">
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={submitting || students.length === 0}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              {submitting ? "Submitting..." : "Submit Attendance"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
+      {/* Attendance Import Modal */}
+      {currentOffering && (
+        <AttendanceImportModal
+          open={importOpen}
+          onClose={() => {
+            setImportOpen(false);
+            // Refresh summary and students when import modal closes, in case records were added
+            const offeringId = parseInt(selectedOffering);
+            if (offeringId) {
+              Promise.all([
+                getOfferingStudentsApi(offeringId),
+                getOfferingSummaryApi(offeringId),
+              ]).then(([studRes, sumRes]) => {
+                const studentList = sortAlpha(studRes.data.students || []);
+                setStudents(studentList);
+                const summaryList = [...(sumRes.data.summary || [])].sort((a: any, b: any) =>
+                  a.student.full_name.localeCompare(b.student.full_name),
+                );
+                setSummary(summaryList);
+              });
+            }
+          }}
+          offering={{
+            id: currentOffering.id,
+            course_name: currentOffering.course_name,
+            section_name: currentOffering.section_name,
+            section_year: currentOffering.section_year,
+            programme_name: currentOffering.programme_name
+          }}
+        />
+      )}
     </div>
   );
 };

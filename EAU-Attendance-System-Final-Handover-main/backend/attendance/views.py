@@ -1012,23 +1012,51 @@ class StudentListView(APIView):
             except Department.DoesNotExist:
                 return Response({'error': 'Department not found'},
                                 status=status.HTTP_404_NOT_FOUND)
-        student = Student.objects.create(
-            first_name=request.data['first_name'],
-            last_name=request.data['last_name'],
-            student_id=request.data['student_id'],
-            email=request.data['email'],
-            parent_email=request.data.get('parent_email', ''),
-            parent_telegram=request.data.get('parent_telegram', ''),
-            programme=programme,
-            department=department,
-        )
+        try:
+            student = Student.objects.create(
+                first_name=request.data['first_name'],
+                last_name=request.data['last_name'],
+                student_id=request.data['student_id'],
+                email=request.data['email'],
+                parent_email=request.data.get('parent_email', ''),
+                parent_telegram=request.data.get('parent_telegram', ''),
+                programme=programme,
+                department=department,
+            )
+        except Exception as e:
+            return Response({'error': f'Failed to create student: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
         if request.data.get('section_id'):
             try:
                 section = Section.objects.get(id=request.data['section_id'])
                 Enrollment.objects.create(student=student, section=section)
             except Section.DoesNotExist:
                 pass
+                
+        # Sync the chat ID if they share a parent telegram with another student
+        sync_telegram_chat_id(student)
+        
         return Response(StudentSerializer(student).data, status=status.HTTP_201_CREATED)
+
+
+def sync_telegram_chat_id(student):
+    try:
+        if student.parent_telegram:
+            base_username = student.parent_telegram.lstrip('@')
+            
+            # Check for another student with the same telegram username that already has a chat_id
+            sibling = Student.objects.filter(
+                (Q(parent_telegram__iexact=base_username) | Q(parent_telegram__iexact=f"@{base_username}")) &
+                ~Q(parent_telegram_chat_id__isnull=True) &
+                ~Q(parent_telegram_chat_id='')
+            ).exclude(id=student.id).first()
+            
+            if sibling:
+                student.parent_telegram_chat_id = sibling.parent_telegram_chat_id
+                student.save(update_fields=['parent_telegram_chat_id'])
+    except Exception:
+        # Ignore errors so it doesn't crash the main save request
+        pass
 
 
 class StudentDetailView(APIView):
@@ -1051,7 +1079,11 @@ class StudentDetailView(APIView):
         if 'department_id' in request.data:
             did = request.data['department_id']
             student.department = Department.objects.filter(id=did).first() if did else None
-        student.save()
+        try:
+            student.save()
+        except Exception as e:
+            return Response({'error': f'Failed to save: {str(e)}'}, status=400)
+            
         # Optionally move the student to a new section
         if request.data.get('section_id'):
             try:
@@ -1065,6 +1097,10 @@ class StudentDetailView(APIView):
                 )
             except Section.DoesNotExist:
                 pass
+                
+        # Sync the chat ID if they share a parent telegram with another student
+        sync_telegram_chat_id(student)
+        
         return Response(StudentSerializer(student).data)
 
     def delete(self, request, student_id):
@@ -1160,6 +1196,9 @@ class StudentBulkImportView(APIView):
                         'is_active':       True,
                     }
                 )
+                
+                # Sync the chat ID if they share a parent telegram with another student
+                sync_telegram_chat_id(student)
 
                 # Auto-enroll in the section
                 try:
