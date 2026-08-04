@@ -1,42 +1,65 @@
 version: "3.8"
 
 services:
+
   db:
     image: postgres:15
     container_name: postgres_db
     restart: always
+
     environment:
       POSTGRES_DB: eau_sams
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: root
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
 
   backend:
     build: ./backend
     container_name: django_backend
     restart: always
+
     ports:
       - "8000:8000"
-    environment:
-      - DEBUG=False
-      - DATABASE_URL=postgres://postgres:root@db:5432/eau_sams
+
     env_file:
       - ./backend/.env
+
+    environment:
+      DEBUG: "False"
+
+      DB_NAME: eau_sams
+      DB_USER: postgres
+      DB_PASSWORD: root
+      DB_HOST: db
+      DB_PORT: 5432
+
     depends_on:
       - db
+
     command: >
-      sh -c "python manage.py migrate &&
-             gunicorn sams.wsgi:application --bind 0.0.0.0:8000"
+      sh -c "
+      python manage.py migrate &&
+      gunicorn sams.wsgi:application --bind 0.0.0.0:8000
+      "
+
 
   frontend:
     build: ./frontend
     container_name: react_frontend
     restart: always
+
     ports:
       - "80:80"
+
+    environment:
+      VITE_API_URL: http://10.252.8.33:8000
+
     depends_on:
       - backend
+
 
 volumes:
   postgres_data:
