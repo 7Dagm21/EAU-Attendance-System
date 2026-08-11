@@ -151,21 +151,20 @@ class AttendanceTemplateView(APIView):
             ("HOW TO FILL THIS TEMPLATE:", True, 11, "1A4A0F"),
             ("1. Go to the 'Attendance' sheet (tab at the bottom).", False, 10, "000000"),
             ("2. For each student and each date column, enter one of:", False, 10, "000000"),
-            ("   P  or  present   = Student was present", False, 10, "000000"),
-            ("   L  or  late      = Student arrived late", False, 10, "000000"),
-            ("   E  or  excused   = Absence is excused", False, 10, "000000"),
-            ("   A  or  absent    = Student was absent (unexcused)", False, 10, "000000"),
+            ("   P = Student was present", False, 10, "000000"),
+            ("   L = Student arrived late", False, 10, "000000"),
+            ("   E = Absence is excused", False, 10, "000000"),
+            ("   A = Student was absent (unexcused)", False, 10, "000000"),
             ("   (Leave blank to skip that date — it won't be imported)", False, 10, "666666"),
             ("", False, 10, "000000"),
             ("3. You can also use dropdowns — click any yellow cell to see the options.", False, 10, "000000"),
             ("4. The 'Hours' column calculates AUTOMATICALLY based on P/L entries.", False, 10, "1A4A0F"),
-            ("   P (present) = 1 hr.  L (late) = 0.5 hr.  Do NOT edit Hours manually.", False, 10, "000000"),
+            ("   P = 1 hr.  L = 0.5 hr.  Do NOT edit Hours manually.", False, 10, "000000"),
             ("5. DO NOT change student names, IDs, or column headers.", False, 10, "CC0000"),
             ("6. DO NOT add or remove rows or columns.", False, 10, "CC0000"),
             ("7. Save the file and upload it in the Teacher Portal.", False, 10, "000000"),
             ("", False, 10, "000000"),
             ("VALID STATUS VALUES:", True, 11, "1A4A0F"),
-            ("Full word:    present  /  late  /  excused  /  absent", False, 10, "000000"),
             ("Short letter: P  /  L  /  E  /  A  (case-insensitive)", False, 10, "000000"),
         ]
 
@@ -241,10 +240,10 @@ class AttendanceTemplateView(APIView):
         # Data validation — dropdown for status cells
         dv = DataValidation(
             type="list",
-            formula1='"present,late,excused,absent,P,L,E,A"',
+            formula1='"P,L,E,A"',
             allow_blank=True,
             showErrorMessage=True,
-            error='Enter: present, late, excused, absent (or P, L, E, A)',
+            error='Enter: P, L, E, A',
             errorTitle='Invalid status',
         )
         ws.add_data_validation(dv)
@@ -298,9 +297,7 @@ class AttendanceTemplateView(APIView):
             date_end_letter   = get_column_letter(DATE_START_COL + n_dates - 1)
             hours_formula = (
                 f'=COUNTIF({date_start_letter}{row}:{date_end_letter}{row},"P")'
-                f'+COUNTIF({date_start_letter}{row}:{date_end_letter}{row},"present")'
                 f'+COUNTIF({date_start_letter}{row}:{date_end_letter}{row},"L")*0.5'
-                f'+COUNTIF({date_start_letter}{row}:{date_end_letter}{row},"late")*0.5'
             )
             c = ws.cell(row=row, column=HOURS_COL, value=hours_formula)
             c.fill = _fill(C_SUM_BG); c.font = _font(size=10, color="1A4A0F", bold=True)
