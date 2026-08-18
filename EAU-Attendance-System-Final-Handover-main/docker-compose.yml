@@ -60,6 +60,27 @@ services:
     depends_on:
       - backend
 
+  telegram_bot:
+    build: ./backend
+    container_name: telegram_bot_worker
+    restart: always
+
+    env_file:
+      - ./backend/.env
+
+    environment:
+      DEBUG: "False"
+      DB_NAME: eau_sams
+      DB_USER: postgres
+      DB_PASSWORD: root
+      DB_HOST: db
+      DB_PORT: 5432
+
+    depends_on:
+      - backend
+
+    command: python manage.py run_telegram_bot
+
 
 volumes:
   postgres_data:
