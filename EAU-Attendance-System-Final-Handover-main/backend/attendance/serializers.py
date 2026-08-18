@@ -220,6 +220,14 @@ class CourseOfferingSerializer(serializers.ModelSerializer):
         source='course.department.name', read_only=True
     )
     teacher_name = serializers.SerializerMethodField()
+    secondary_teachers = UserSerializer(many=True, read_only=True)
+    secondary_teacher_ids = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(role='teacher'),
+        many=True,
+        required=False,
+        source='secondary_teachers'
+    )
+    all_teachers_display = serializers.SerializerMethodField()
     semester_label = serializers.SerializerMethodField()
     schedule_slots = TeachingScheduleSerializer(many=True, read_only=True)
 
@@ -230,11 +238,20 @@ class CourseOfferingSerializer(serializers.ModelSerializer):
             'total_credit_hours', 'minimum_required_hours',
             'section', 'section_name', 'section_year',
             'programme_name', 'department_name',
-            'teacher', 'teacher_name', 'semester_label', 'schedule_slots'
+            'teacher', 'teacher_name', 'secondary_teachers', 'secondary_teacher_ids',
+            'all_teachers_display', 'semester_label', 'schedule_slots'
         ]
 
     def get_teacher_name(self, obj):
         return obj.teacher.get_full_name() if obj.teacher else None
+
+    def get_all_teachers_display(self, obj):
+        names = []
+        if obj.teacher:
+            names.append(f"{obj.teacher.get_full_name()} (Primary)")
+        for st in obj.secondary_teachers.all():
+            names.append(f"{st.get_full_name()} (Co-Teacher)")
+        return " | ".join(names) if names else "Unassigned"
 
     def get_semester_label(self, obj):
         return str(obj.section.semester)

@@ -198,7 +198,7 @@ def send_attendance_status_warning(student, course, summary, status_label):
             'parse_mode': 'Markdown'
         }
         try:
-            requests.post(url, data=payload)
+            requests.post(url, data=payload, verify=False, timeout=10)
         except Exception as e:
             print(f"DEBUG: Telegram connection failed: {e}")
 
@@ -218,100 +218,164 @@ def send_threshold_warning(student, course, attended_sessions, total_sessions):
     send_attendance_status_warning(student, course, summary, 'at_risk')
 
 
-def send_absence_alert(student, course, date):
-    subject = f"Absence Alert — {course.name}"
+def send_absence_alert(student, course, date, summary=None, status_label=None, session_type=None):
+    """
+    Sends a single consolidated absence alert (Email & Telegram) containing
+    session date, course, absence status, and updated attendance threshold metrics.
+    """
+    course_name = getattr(course, 'name', str(course))
+    session_str = f" ({session_type.title()})" if session_type else ""
+
+    metric_rows_html = ""
+    telegram_metric_text = ""
+    status_advice = "Please ensure the student maintains the minimum required attendance (85%) and attends upcoming sessions."
+
+    if summary:
+        current_pct = summary.get('current_percentage', 0.0)
+        proj_pct = summary.get('projected_final_percentage', 0.0)
+        classes_held = summary.get('classes_held_hours', 0)
+        rem_classes = summary.get('remaining_possible_hours', 0)
+
+        if status_label == 'cannot_sit_final' or proj_pct < 85.0:
+            status_advice = (
+                f"🚨 CRITICAL: Best possible final attendance is {proj_pct}%, which is below the 85.0% threshold. "
+                f"The student is at immediate risk of being debarred from final examinations."
+            )
+        elif status_label == 'at_risk' or current_pct < 85.0:
+            status_advice = (
+                f"⚠️ WARNING: Current attendance is {current_pct}%, below the required 85.0% minimum threshold. "
+                f"Please ensure regular attendance in upcoming sessions to restore examination eligibility."
+            )
+        else:
+            status_advice = (
+                f"ℹ️ Status: Current attendance is {current_pct}% (Best possible: {proj_pct}%). "
+                f"Please ensure the student attends subsequent sessions."
+            )
+
+        pct_color = '#e74c3c' if current_pct < 85.0 else '#27ae60'
+        metric_rows_html = f"""
+            <tr style="background-color: #f8fafc;">
+                <td style="padding: 10px; font-weight: bold;">Current Attendance</td>
+                <td style="padding: 10px; font-weight: bold; color: {pct_color};">{current_pct}%</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px;">Best Possible Final Attendance</td>
+                <td style="padding: 10px;">{proj_pct}%</td>
+            </tr>
+            <tr style="background-color: #f8fafc;">
+                <td style="padding: 10px;">Classes Held / Remaining</td>
+                <td style="padding: 10px;">{classes_held} held / {rem_classes} remaining</td>
+            </tr>
+        """
+
+        telegram_metric_text = (
+            f"📊 *Attendance Summary:*\n"
+            f"• *Current Attendance:* {current_pct}%\n"
+            f"• *Best Possible Final:* {proj_pct}%\n"
+            f"• *Required Minimum:* 85.0%\n\n"
+        )
+
+    subject = f"Absence Alert — {student.full_name} — {course_name}"
+    student_display_name = student.full_name
 
     body = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
         <div style="background-color: #1B3A6B; padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">EAU Attendance System</h1>
+            <h1 style="color: white; margin: 0; font-size: 22px;">EAU Attendance System</h1>
+            <p style="color: #cbd5e1; margin: 4px 0 0 0; font-size: 13px;">Official Absence & Attendance Notification</p>
         </div>
-        <div style="padding: 30px; background-color: #f9f9f9;">
-            <h2 style="color: #e74c3c;">Absence Notification</h2>
-            <p>Dear {student.full_name},</p>
-            <p>This is to inform you that you were marked <strong>absent</strong> 
-            from the following class:</p>
-            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <div style="padding: 24px; background-color: #ffffff;">
+            <h2 style="color: #e74c3c; margin-top: 0; font-size: 18px;">⚠️ Absence Notification</h2>
+            <p style="font-size: 14px; color: #334155;">Dear {student_display_name},</p>
+            <p style="font-size: 14px; color: #334155;">This is an automated notification that you were marked <strong>ABSENT</strong> for the following class session:</p>
+            
+            <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
                 <tr style="background-color: #1B3A6B; color: white;">
-                    <td style="padding: 10px;">Course</td>
-                    <td style="padding: 10px;">{course.name}</td>
+                    <td style="padding: 10px; font-weight: bold;">Course</td>
+                    <td style="padding: 10px;">{course_name}{session_str}</td>
                 </tr>
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px;">Date</td>
+                <tr style="background-color: #f8fafc;">
+                    <td style="padding: 10px; font-weight: bold;">Date</td>
                     <td style="padding: 10px;">{date}</td>
                 </tr>
                 <tr>
-                    <td style="padding: 10px;">Student ID</td>
+                    <td style="padding: 10px; font-weight: bold;">Student ID</td>
                     <td style="padding: 10px;">{student.student_id}</td>
                 </tr>
+                <tr style="background-color: #fef2f2; color: #991b1b;">
+                    <td style="padding: 10px; font-weight: bold;">Session Status</td>
+                    <td style="padding: 10px; font-weight: bold;">ABSENT</td>
+                </tr>
+                {metric_rows_html}
             </table>
-            <p>Please ensure you maintain the minimum required attendance to remain 
-            eligible for the final examination.</p>
-            <p style="color: #666; font-size: 12px;">
-                This is an automated message from the EAU Attendance Management System.
+            
+            <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px; margin: 16px 0; font-size: 13px; color: #92400e; border-radius: 0 6px 6px 0;">
+                <strong>Notice & Required Action:</strong><br/>
+                {status_advice}
+            </div>
+
+            <p style="color: #64748b; font-size: 11px; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 12px;">
+                This is an automated message from the Emirates Aviation University Attendance Management System. If you have an authorized excuse, please provide official documentation to your department.
             </p>
         </div>
     </div>
     """
 
-    # Send to student
-    send_email(student.email, subject, body)
+    # 1. Send to student email
+    if student.email:
+        send_email(student.email, subject, body)
 
+    # 2. Send to parent email
+    if student.parent_email:
+        parent_body = body.replace(f"Dear {student_display_name},", f"Dear Parent/Guardian of {student_display_name},")
+        send_email(student.parent_email, subject, parent_body)
+
+    # 3. Create in-app notifications
     try:
         from .models import User, Notification
+        summary_txt = f" Current attendance: {summary['current_percentage']}%." if summary else ""
         student_user = User.objects.filter(email=student.email).first()
         if student_user:
             Notification.objects.create(
                 recipient=student_user,
                 notification_type='absence',
-                message=f"You were marked absent in {course.name} on {date}."
+                message=f"You were marked absent in {course_name} on {date}.{summary_txt}"
             )
-    except Exception as e:
-        print(f"Error creating in-app notification: {e}")
-
-    # Send to parent
-    parent_subject = f"Absence Alert — {student.full_name} — {course.name}"
-    parent_body = body.replace(
-        f"Dear {student.full_name}",
-        f"Dear Parent/Guardian of {student.full_name}"
-    )
-    send_email(student.parent_email, parent_subject, parent_body)
-
-    try:
-        from .models import User, Notification
         parent_user = User.objects.filter(email=student.parent_email).first()
         if parent_user:
             Notification.objects.create(
                 recipient=parent_user,
                 notification_type='absence',
-                message=f"Your student {student.full_name} was marked absent in {course.name} on {date}."
+                message=f"Your student {student.full_name} was marked absent in {course_name} on {date}.{summary_txt}"
             )
     except Exception as e:
-        print(f"Error creating in-app parent notification: {e}")
+        print(f"Error creating in-app notification: {e}")
 
-    # Send telegram to parent
+    # 4. Send EXACTLY ONE Telegram message to parent
     if student.parent_telegram_chat_id:
         import requests
         from decouple import config
         token = config('TELEGRAM_BOT_TOKEN', default='8686617227:AAHOlrg0Ohe6fkPhFwiRGYb7ui4jHFTQrPo')
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        
+
         telegram_message = (
             f"Dear Parent/Guardian,\n\n"
-            f"This is an automated absence alert from EAU Attendance System.\n\n"
-            f"Student: {student.full_name} ({student.student_id})\n"
-            f"Course: {course.name}\n"
-            f"Date: {date}\n\n"
-            f"Please ensure the student maintains the minimum required attendance."
+            f"This is an automated attendance alert from *EAU Attendance System*.\n\n"
+            f"• *Student:* {student.full_name} ({student.student_id})\n"
+            f"• *Course:* {course_name}\n"
+            f"• *Date:* {date}{session_str}\n"
+            f"• *Status:* ❌ ABSENT\n\n"
+            f"{telegram_metric_text}"
+            f"📢 *Notice:*\n{status_advice}"
         )
-        
+
         payload = {
             'chat_id': student.parent_telegram_chat_id,
-            'text': f"⚠️ *{parent_subject}*\n\n{telegram_message}",
+            'text': f"⚠️ *Absence Alert — {student.full_name} — {course_name}*\n\n{telegram_message}",
             'parse_mode': 'Markdown'
         }
         try:
-            requests.post(url, data=payload)
+            requests.post(url, data=payload, verify=False, timeout=10)
         except Exception as e:
             print(f"DEBUG: Telegram connection failed: {e}")
 

@@ -11,10 +11,12 @@ attendance_excel.py — Two views for Excel-based attendance workflow:
 """
 
 import io
+import threading
 from datetime import date, timedelta
 from decimal import Decimal
 
 from django.http import HttpResponse
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -29,7 +31,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from .models import (
-    CourseOffering, Enrollment, Student,
+    User, CourseOffering, Enrollment, Student,
     AttendanceRecord, SystemSettings
 )
 from .utils import (
@@ -58,6 +60,43 @@ def _fill(hex_color):
 
 def _font(bold=False, color="000000", size=10):
     return Font(name='Arial', bold=bold, color=color, size=size)
+
+def get_offering_session_hours(offering):
+    """Determine standard session duration in hours for a course offering."""
+    try:
+        from .models import TeachingSchedule
+        slot = TeachingSchedule.objects.filter(course_offering=offering).first()
+        if slot and slot.start_time and slot.end_time:
+            from datetime import datetime
+            t1 = datetime.combine(date.today(), slot.start_time)
+            t2 = datetime.combine(date.today(), slot.end_time)
+            diff = (t2 - t1).total_seconds() / 3600.0
+            if 0.5 <= diff <= 8.0:
+                return round(diff, 1)
+    except Exception:
+        pass
+    return 1.5
+
+def parse_session_hours_val(val, default=1.5):
+    """Convert user-entered/dropdown session time strings (e.g. '55 min', '1 hr', '1.5 hr', '2 hr') to decimal hours."""
+    if val is None:
+        return default
+    s = str(val).strip().lower()
+    if '55' in s or 'min' in s:
+        return 1.0
+    if s in ('1', '1.0', '1 hr', '1hr', '1 h', '1h', '1.0 hr'):
+        return 1.0
+    if s in ('1.5', '1.5 hr', '1.5hr', '1.5 h', '1.5h', '1.5 hrs'):
+        return 1.5
+    if s in ('2', '2.0', '2 hr', '2hr', '2 h', '2h', '2.0 hr', '2 hrs'):
+        return 2.0
+    try:
+        num = float(s.replace('hrs', '').replace('hr', '').replace('h', '').strip())
+        if 0.5 <= num <= 8.0:
+            return num
+    except Exception:
+        pass
+    return default
 
 def _week_dates(week_start: date):
     """Return Mon–Fri dates for the week containing week_start."""
@@ -146,26 +185,24 @@ class AttendanceTemplateView(APIView):
 
         instructions = [
             ("EAU Student Attendance Management System", True, 14, C_HEADER_BG),
-            ("Attendance Import Template — Instructions", False, 11, "374151"),
+            ("Attendance Import Template - Instructions", False, 11, "374151"),
             ("", False, 10, "000000"),
             ("HOW TO FILL THIS TEMPLATE:", True, 11, "1A4A0F"),
             ("1. Go to the 'Attendance' sheet (tab at the bottom).", False, 10, "000000"),
-            ("2. For each student and each date column, enter one of:", False, 10, "000000"),
-            ("   P = Student was present", False, 10, "000000"),
-            ("   L = Student arrived late", False, 10, "000000"),
-            ("   E = Absence is excused", False, 10, "000000"),
-            ("   A = Student was absent (unexcused)", False, 10, "000000"),
-            ("   (Leave blank to skip that date — it won't be imported)", False, 10, "666666"),
+            ("2. For each student and each date column, select or type one symbol only:", False, 10, "000000"),
+            ("   P = Present", False, 10, "000000"),
+            ("   L = Late", False, 10, "000000"),
+            ("   E = Excused", False, 10, "000000"),
+            ("   A = Absent", False, 10, "000000"),
+            ("   (Leave cell blank to skip that date - it will not be imported)", False, 10, "666666"),
             ("", False, 10, "000000"),
-            ("3. You can also use dropdowns — click any yellow cell to see the options.", False, 10, "000000"),
-            ("4. The 'Hours' column calculates AUTOMATICALLY based on P/L entries.", False, 10, "1A4A0F"),
-            ("   P = 1 hr.  L = 0.5 hr.  Do NOT edit Hours manually.", False, 10, "000000"),
+            ("3. Dropdowns: Click any yellow date cell to choose P, L, E, or A.", False, 10, "000000"),
+            ("4. Session Hours: You can select the class time (1.0, 1.5, 2.0, 3.0 hrs) from the dropdown.", False, 10, "1A4A0F"),
             ("5. DO NOT change student names, IDs, or column headers.", False, 10, "CC0000"),
-            ("6. DO NOT add or remove rows or columns.", False, 10, "CC0000"),
-            ("7. Save the file and upload it in the Teacher Portal.", False, 10, "000000"),
+            ("6. Save the file and upload it in the Teacher Portal.", False, 10, "000000"),
             ("", False, 10, "000000"),
-            ("VALID STATUS VALUES:", True, 11, "1A4A0F"),
-            ("Short letter: P  /  L  /  E  /  A  (case-insensitive)", False, 10, "000000"),
+            ("VALID STATUS SYMBOLS:", True, 11, "1A4A0F"),
+            ("Only single letters allowed: P  /  L  /  E  /  A", False, 10, "000000"),
         ]
 
         for row_data in instructions:
@@ -178,15 +215,41 @@ class AttendanceTemplateView(APIView):
         # ── Attendance sheet ──────────────────────────────────────────────────
         ws = wb.create_sheet('Attendance')
 
+        # Read session_hours from query parameter (e.g. ?session_hours=1.5 or 2.0 or 1.0)
+        session_hours_param = request.query_params.get('session_hours')
+        if session_hours_param:
+            try:
+                session_hours = float(session_hours_param)
+                if session_hours < 0.5 or session_hours > 8.0:
+                    session_hours = 1.5
+            except (ValueError, TypeError):
+                session_hours = 1.5
+        else:
+            session_hours = get_offering_session_hours(offering)
+
         # Meta info rows
+        teacher_name = "—"
+        teacher_id_param = request.query_params.get('teacher_id')
+        if teacher_id_param:
+            try:
+                t_user = User.objects.get(id=int(teacher_id_param))
+                teacher_name = t_user.get_full_name() or t_user.username
+            except (User.DoesNotExist, ValueError):
+                pass
+        elif request.user.role == 'teacher':
+            teacher_name = request.user.get_full_name() or request.user.username
+        elif offering.teacher:
+            teacher_name = offering.teacher.get_full_name() or offering.teacher.username
+
         meta = [
-            ("Course:",         offering.course.name),
-            ("Section:",        f"{offering.section.name} — Year {offering.section.year}"),
-            ("Programme:",      offering.section.programme.name),
-            ("Semester:",       str(offering.section.semester)),
-            ("Teacher:",        offering.teacher.get_full_name() if offering.teacher else "—"),
-            ("Total Students:", str(len(students))),
-            ("Generated:",      str(date.today())),
+            ("Course:",                  offering.course.name),
+            ("Section:",                 f"{offering.section.name} — Year {offering.section.year}"),
+            ("Programme:",               offering.section.programme.name),
+            ("Semester:",                str(offering.section.semester)),
+            ("Teacher:",                 teacher_name),
+            ("Class Session Duration:",  f"{session_hours} hrs"),
+            ("Total Students:",          str(len(students))),
+            ("Generated:",               str(date.today())),
         ]
         for i, (label, value) in enumerate(meta, start=1):
             ws.cell(row=i, column=1, value=label).font = _font(bold=True, color=C_HEADER_BG)
@@ -226,7 +289,7 @@ class AttendanceTemplateView(APIView):
             from openpyxl.comments import Comment
             cell.comment = Comment(d.isoformat(), "SAMS")
 
-        for col, h in [(SESSION_COL, "Session Type"), (HOURS_COL, "Hours")]:
+        for col, h in [(SESSION_COL, "Session Type"), (HOURS_COL, "Session Hours")]:
             cell = ws.cell(row=header_row, column=col, value=h)
             cell.font      = _font(bold=True, color=C_HEADER_FG, size=10)
             cell.fill      = _fill("2563EB")
@@ -237,13 +300,13 @@ class AttendanceTemplateView(APIView):
         ws.row_dimensions[header_row].height = 32
 
         # ── Student rows ──────────────────────────────────────────────────────
-        # Data validation — dropdown for status cells
+        # Data validation — dropdown for status cells (P, L, E, A only)
         dv = DataValidation(
             type="list",
             formula1='"P,L,E,A"',
             allow_blank=True,
             showErrorMessage=True,
-            error='Enter: P, L, E, A',
+            error='Enter: P (Present), L (Late), E (Excused), A (Absent)',
             errorTitle='Invalid status',
         )
         ws.add_data_validation(dv)
@@ -255,6 +318,18 @@ class AttendanceTemplateView(APIView):
             showErrorMessage=True,
         )
         ws.add_data_validation(dv_session)
+
+        dv_hours = DataValidation(
+            type="list",
+            formula1='"55 min,1 hr,1.5 hr,2 hr"',
+            allow_blank=False,
+            showErrorMessage=True,
+            error='Select: 55 min, 1 hr, 1.5 hr, or 2 hr',
+            errorTitle='Invalid session time',
+        )
+        ws.add_data_validation(dv_hours)
+
+        first_hours_cell_ref = f"${get_column_letter(HOURS_COL)}${header_row + 1}"
 
         for idx, student in enumerate(students):
             row = header_row + 1 + idx
@@ -291,17 +366,17 @@ class AttendanceTemplateView(APIView):
             c.alignment = Alignment(horizontal='center'); c.border = _thin_border()
             dv_session.add(c)
 
-            # Hours — Excel formula: counts P/present/L/late cells × 1 hr each
-            # Late counts as 0.5 hrs (deduction). Formula auto-updates as teacher fills.
-            date_start_letter = get_column_letter(DATE_START_COL)
-            date_end_letter   = get_column_letter(DATE_START_COL + n_dates - 1)
-            hours_formula = (
-                f'=COUNTIF({date_start_letter}{row}:{date_end_letter}{row},"P")'
-                f'+COUNTIF({date_start_letter}{row}:{date_end_letter}{row},"L")*0.5'
-            )
-            c = ws.cell(row=row, column=HOURS_COL, value=hours_formula)
+            # Session Hours:
+            # First student gets default "1.5 hr" with dropdown.
+            # All other students get formula pointing to the first student (e.g. =$J$11)
+            # When teacher changes the time for the first student, all students update automatically!
+            if idx == 0:
+                c = ws.cell(row=row, column=HOURS_COL, value="1.5 hr")
+            else:
+                c = ws.cell(row=row, column=HOURS_COL, value=f"={first_hours_cell_ref}")
             c.fill = _fill(C_SUM_BG); c.font = _font(size=10, color="1A4A0F", bold=True)
             c.alignment = Alignment(horizontal='center'); c.border = _thin_border()
+            dv_hours.add(c)
 
             ws.row_dimensions[row].height = 20
 
@@ -312,7 +387,7 @@ class AttendanceTemplateView(APIView):
         for i in range(n_dates):
             ws.column_dimensions[get_column_letter(DATE_START_COL + i)].width = 10
         ws.column_dimensions[get_column_letter(SESSION_COL)].width = 14
-        ws.column_dimensions[get_column_letter(HOURS_COL)].width = 8
+        ws.column_dimensions[get_column_letter(HOURS_COL)].width = 14
 
         # ── Freeze panes ──────────────────────────────────────────────────────
         ws.freeze_panes = ws.cell(row=header_row + 1,
@@ -332,9 +407,12 @@ class AttendanceTemplateView(APIView):
         meta_sheet['B5'] = str(SESSION_COL)
         meta_sheet['A6'] = 'hours_col'
         meta_sheet['B6'] = str(HOURS_COL)
+        meta_sheet['A7'] = 'session_hours'
+        meta_sheet['B7'] = str(session_hours)
         # Store dates row
         for i, d in enumerate(all_days):
-            meta_sheet.cell(row=7, column=i + 1, value=d.isoformat())
+            meta_sheet.cell(row=8, column=i + 1, value=d.isoformat())
+        meta_sheet.sheet_state = 'hidden'
         meta_sheet.sheet_state = 'hidden'
 
         # ── Stream response ───────────────────────────────────────────────────
@@ -343,8 +421,9 @@ class AttendanceTemplateView(APIView):
         buf.seek(0)
 
         safe_name  = offering.course.name.replace(' ', '_')[:30]
+        safe_teacher = teacher_name.replace(' ', '_').replace('/', '_') if teacher_name and teacher_name != '—' else ''
         week_label = all_days[0].strftime('%Y%m%d') if all_days else 'template'
-        filename   = f"Attendance_{safe_name}_{week_label}.xlsx"
+        filename   = f"Attendance_{safe_name}_{safe_teacher}_{week_label}.xlsx" if safe_teacher else f"Attendance_{safe_name}_{week_label}.xlsx"
 
         response = HttpResponse(
             buf.read(),
@@ -352,6 +431,48 @@ class AttendanceTemplateView(APIView):
         )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
+
+
+def _dispatch_import_notifications_async(records_to_notify, offering_id, teacher_id):
+    """Background worker to send email, Telegram alerts, and threshold warnings asynchronously without blocking HTTP response."""
+    try:
+        from .models import CourseOffering, User, Student, SystemSettings
+        from .views import notify_elevated
+        offering = CourseOffering.objects.select_related('course__programme', 'section').get(id=offering_id)
+        teacher = User.objects.get(id=teacher_id)
+        warning_threshold = float(SystemSettings.get().warning_threshold)
+        teacher_name = teacher.get_full_name() or teacher.username
+
+        seen_students = set()
+
+        for r in records_to_notify:
+            if r['status'] == 'absent':
+                try:
+                    notify_elevated(
+                        'absence',
+                        f"{r['student_name']} (ID: {r['student_id']}) was absent in "
+                        f"{offering.course.name} on {r['date']} (imported). By {teacher_name}.",
+                        programme=offering.course.programme,
+                    )
+                    student_obj = Student.objects.filter(student_id=r['student_id']).first()
+                    if student_obj:
+                        summary = calculate_attendance_status(student_obj, offering, cutoff_date=r['date'])
+                        status_label = None
+                        if summary:
+                            if summary['projected_final_percentage'] < warning_threshold:
+                                status_label = 'cannot_sit_final'
+                            elif summary['current_percentage'] < warning_threshold:
+                                status_label = 'at_risk'
+
+                        send_absence_alert(
+                            student_obj, offering.course, r['date'],
+                            summary=summary, status_label=status_label,
+                            session_type=r.get('session_type')
+                        )
+                except Exception as e:
+                    print(f"DEBUG: Error sending absence alert in background: {e}")
+    except Exception as e:
+        print(f"DEBUG: Fatal error in _dispatch_import_notifications_async: {e}")
 
 
 # ── Excel Import ──────────────────────────────────────────────────────────────
@@ -382,10 +503,15 @@ class AttendanceImportView(APIView):
             n_dates       = int(meta['B4'].value)
             session_col   = int(meta['B5'].value)
             hours_col     = int(meta['B6'].value)
-            dates = [
-                date.fromisoformat(str(meta.cell(row=7, column=i + 1).value))
-                for i in range(n_dates)
-            ]
+
+            dates = []
+            for i in range(n_dates):
+                val = meta.cell(row=8, column=i + 1).value or meta.cell(row=7, column=i + 1).value
+                if val:
+                    dates.append(date.fromisoformat(str(val).strip()))
+
+            if not dates:
+                raise ValueError("No dates found in template")
         except Exception:
             return Response(
                 {'error': 'This file was not generated by SAMS or has been corrupted. Please download a fresh template.'},
@@ -400,7 +526,13 @@ class AttendanceImportView(APIView):
             return Response({'error': 'Course offering not found'},
                             status=status.HTTP_404_NOT_FOUND)
 
-        warning_threshold = float(SystemSettings.get().warning_threshold)
+        session_hours = 1.5
+        try:
+            sh_val = meta['B7'].value
+            if sh_val:
+                session_hours = parse_session_hours_val(sh_val, default=1.5)
+        except Exception:
+            pass
 
         ws = wb['Attendance']
 
@@ -410,6 +542,11 @@ class AttendanceImportView(APIView):
         skipped   = []  # blank cells
 
         data_start = header_row + 1
+
+        # Read master session time from first student row
+        master_hours_val = ws.cell(row=data_start, column=hours_col).value
+        master_hours = parse_session_hours_val(master_hours_val, default=session_hours)
+
         for row_idx in range(data_start, ws.max_row + 1):
             student_id_val = ws.cell(row=row_idx, column=3).value
             if not student_id_val:
@@ -432,11 +569,10 @@ class AttendanceImportView(APIView):
                 session_type = 'theory'
 
             hours_val = ws.cell(row=row_idx, column=hours_col).value
-            try:
-                hours = float(hours_val or 1.5)
-                hours = max(0.5, min(8.0, hours))
-            except (ValueError, TypeError):
-                hours = 1.5
+            if hours_val is None or (isinstance(hours_val, str) and hours_val.startswith('=')):
+                hours = master_hours
+            else:
+                hours = parse_session_hours_val(hours_val, default=master_hours)
 
             for i, att_date in enumerate(dates):
                 col        = date_start_col + i
@@ -496,62 +632,45 @@ class AttendanceImportView(APIView):
         created_count = 0
         updated_count = 0
 
-        for r in records:
-            obj, created = AttendanceRecord.objects.update_or_create(
-                student=r['student'],
-                course_offering=offering,
-                date=r['date'],
-                session_type=r['session_type'],
-                defaults={
-                    'status':         r['status'],
-                    'hours_attended': r['hours'],
-                    'recorded_by':    teacher,
-                }
-            )
-            if created:
-                created_count += 1
-            else:
-                updated_count += 1
-
-            # Fire absence alerts
-            if r['status'] == 'absent':
-                try:
-                    from .views import notify_elevated
-                    teacher_name = teacher.get_full_name() or teacher.username
-                    notify_elevated(
-                        'absence',
-                        f"{r['student_name']} (ID: {r['student_id']}) was absent in "
-                        f"{offering.course.name} on {r['date']} (imported). By {teacher_name}.",
-                        programme=offering.course.programme,
-                    )
-                    # Get student instance to send alert
-                    student_obj = Student.objects.get(student_id=r['student_id'])
-                    send_absence_alert(student_obj, offering.course, r['date'])
-                except Exception as e:
-                    print(f"Error sending absence alert for {r['student_id']}: {e}")
-
-            summary = calculate_attendance_status(r['student'], offering, cutoff_date=r['date'])
-            if summary:
-                if summary['projected_final_percentage'] < warning_threshold:
-                    status_label = 'cannot_sit_final'
-                elif summary['current_percentage'] < warning_threshold:
-                    status_label = 'at_risk'
+        with transaction.atomic():
+            for r in records:
+                obj, created = AttendanceRecord.objects.update_or_create(
+                    student=r['student'],
+                    course_offering=offering,
+                    date=r['date'],
+                    session_type=r['session_type'],
+                    defaults={
+                        'status':         r['status'],
+                        'hours_attended': r['hours'],
+                        'recorded_by':    teacher,
+                    }
+                )
+                if created:
+                    created_count += 1
                 else:
-                    status_label = None
+                    updated_count += 1
 
-                if status_label:
-                    try:
-                        send_attendance_status_warning(
-                            r['student'],
-                            offering.course,
-                            summary,
-                            status_label,
-                        )
-                    except Exception as e:
-                        print(f"Error sending threshold warning for {r['student_id']}: {e}")
+        # Dispatch slow email / Telegram notifications in a non-blocking background thread
+        if records:
+            notification_data = [
+                {
+                    'student_id': r['student_id'],
+                    'student_name': r['student_name'],
+                    'date': r['date'],
+                    'status': r['status'],
+                }
+                for r in records
+            ]
+            import threading
+            thread = threading.Thread(
+                target=_dispatch_import_notifications_async,
+                args=(notification_data, offering.id, teacher.id),
+                daemon=True,
+            )
+            thread.start()
 
         return Response({
-            'message':       f'{created_count} records created, {updated_count} updated.',
+            'message':       f'{created_count} records created, {updated_count} updated successfully.',
             'created':       created_count,
             'updated':       updated_count,
             'skipped':       len(skipped),

@@ -213,7 +213,13 @@ const ScopeField = ({
   return null;
 };
 
-const TeacherOfferingsField = ({ teacherId }: { teacherId: number }) => {
+const TeacherOfferingsField = ({
+  teacherId,
+  onChanged,
+}: {
+  teacherId: number;
+  onChanged?: () => void;
+}) => {
   const [offerings, setOfferings] = useState<
     {
       id: number;
@@ -223,6 +229,8 @@ const TeacherOfferingsField = ({ teacherId }: { teacherId: number }) => {
       programme_name: string;
       teacher: number | null;
       teacher_name?: string | null;
+      secondary_teachers?: { id: number; username?: string; first_name?: string; last_name?: string; full_name?: string }[];
+      all_teachers_display?: string;
     }[]
   >([]);
   const [loading, setLoading] = useState(true);
@@ -235,15 +243,48 @@ const TeacherOfferingsField = ({ teacherId }: { teacherId: number }) => {
       .finally(() => setLoading(false));
   }, []);
 
-  const toggle = async (offeringId: number, assign: boolean) => {
+  const handleRoleChange = async (
+    offeringId: number,
+    newRole: "none" | "primary" | "secondary",
+  ) => {
     setSavingId(offeringId);
     try {
+      const current = offerings.find((o) => o.id === offeringId);
+      if (!current) return;
+
+      let newTeacherId: number | null = current.teacher;
+      let newSecondaryIds: number[] = (current.secondary_teachers || []).map(
+        (st) => st.id,
+      );
+
+      if (newRole === "primary") {
+        newTeacherId = teacherId;
+        newSecondaryIds = newSecondaryIds.filter((id) => id !== teacherId);
+      } else if (newRole === "secondary") {
+        if (current.teacher === teacherId) {
+          newTeacherId = null;
+        }
+        if (!newSecondaryIds.includes(teacherId)) {
+          newSecondaryIds = [...newSecondaryIds, teacherId];
+        }
+      } else {
+        // "none"
+        if (current.teacher === teacherId) {
+          newTeacherId = null;
+        }
+        newSecondaryIds = newSecondaryIds.filter((id) => id !== teacherId);
+      }
+
       const res = await updateOfferingApi(offeringId, {
-        teacher_id: assign ? teacherId : null,
+        teacher_id: newTeacherId,
+        secondary_teacher_ids: newSecondaryIds,
       });
+
       setOfferings((prev) =>
         prev.map((o) => (o.id === offeringId ? { ...o, ...res.data } : o)),
       );
+      toast.success("Course assignment updated");
+      onChanged?.();
     } catch {
       toast.error("Failed to update offering assignment");
     } finally {
@@ -268,54 +309,94 @@ const TeacherOfferingsField = ({ teacherId }: { teacherId: number }) => {
         Assigned Courses (Course Offerings)
       </p>
       <p className="text-xs text-muted-foreground">
-        Check the courses/sections this teacher should teach. Unchecking
-        removes them from this teacher (they become unassigned, not deleted).
+        Assign this teacher as <strong>Primary</strong> or{" "}
+        <strong>Co-Teacher (Secondary)</strong>. Multiple teachers can teach the
+        same course and section.
       </p>
-      <div className="max-h-56 overflow-y-auto border border-input rounded-lg divide-y divide-border">
+      <div className="max-h-60 overflow-y-auto border border-input rounded-lg divide-y divide-border">
         {offerings.length === 0 && (
           <p className="text-xs text-muted-foreground p-3">
             No course offerings found. Create them in Setup → Course Offerings.
           </p>
         )}
         {offerings.map((o) => {
-          const assignedToMe = o.teacher === teacherId;
-          const assignedToOther = o.teacher !== null && !assignedToMe;
+          const isPrimary = o.teacher === teacherId;
+          const isSecondary = (o.secondary_teachers || []).some(
+            (st) => st.id === teacherId,
+          );
+          const currentRole: "none" | "primary" | "secondary" = isPrimary
+            ? "primary"
+            : isSecondary
+              ? "secondary"
+              : "none";
+
           return (
-            <label
+            <div
               key={o.id}
-              className={`flex items-start justify-between gap-3 px-4 py-3 text-sm cursor-pointer hover:bg-muted/40 transition-colors ${
+              className={`flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-muted/30 transition-colors ${
                 savingId === o.id ? "opacity-50" : ""
               }`}
             >
-              <span className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={assignedToMe}
-                  disabled={savingId === o.id}
-                  onChange={(e) => toggle(o.id, e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded border-input text-primary focus:ring-primary flex-shrink-0 cursor-pointer"
-                />
-                <span className="flex flex-col gap-0.5">
-                  <span className="font-medium leading-tight">{o.course_name}</span>
-                  <span className="text-muted-foreground text-xs leading-snug">
-                    {o.programme_name} · Sec {o.section_name} (Y{o.section_year})
-                  </span>
+              <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                <span className="font-medium leading-tight truncate">
+                  {o.course_name}
                 </span>
-              </span>
-              {assignedToOther && (
-                <div className="flex flex-col items-end flex-shrink-0 mt-0.5">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Currently</span>
-                  <span className="text-xs text-amber-600 font-medium text-right">
-                    {o.teacher_name}
+                <span className="text-muted-foreground text-xs leading-snug">
+                  {o.programme_name} · Sec {o.section_name} (Y{o.section_year})
+                </span>
+                {o.all_teachers_display && (
+                  <span className="text-[11px] text-muted-foreground/80 mt-0.5">
+                    Assigned: {o.all_teachers_display}
                   </span>
-                </div>
-              )}
-            </label>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <select
+                  value={currentRole}
+                  disabled={savingId === o.id}
+                  onChange={(e) =>
+                    handleRoleChange(o.id, e.target.value as any)
+                  }
+                  className={`text-xs rounded-md border px-2 py-1 outline-none font-medium transition-colors ${
+                    currentRole === "primary"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : currentRole === "secondary"
+                        ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                        : "bg-background border-input text-muted-foreground"
+                  }`}
+                >
+                  <option value="none">Not Assigned</option>
+                  <option value="primary">Primary Teacher</option>
+                  <option value="secondary">Co-Teacher (Secondary)</option>
+                </select>
+              </div>
+            </div>
           );
         })}
       </div>
     </div>
   );
+};
+
+const enrichUsersWithCourses = (usersList: User[], offeringsList: any[]) => {
+  return usersList.map((u: User) => {
+    if (u.role === "teacher") {
+      const courses = offeringsList
+        .filter(
+          (o: any) =>
+            o.teacher === u.id ||
+            (o.secondary_teachers || []).some((st: any) => st.id === u.id),
+        )
+        .map((o: any) => {
+          const isPrimary = o.teacher === u.id;
+          return isPrimary
+            ? `${o.course_name} (Primary)`
+            : `${o.course_name} (Co-Teacher)`;
+        });
+      return { ...u, teaching_courses: courses };
+    }
+    return u;
+  });
 };
 
 const UserRolesTab = () => {
@@ -363,6 +444,16 @@ const UserRolesTab = () => {
   const [importResults, setImportResults] = useState<ImportResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const refreshUsersAndCourses = async () => {
+    try {
+      const [usersRes, offeringsRes] = await Promise.all([
+        getUsersApi(),
+        getOfferingsApi({}),
+      ]);
+      setUsers(enrichUsersWithCourses(usersRes.data, offeringsRes.data || []));
+    } catch {}
+  };
+
   useEffect(() => {
     Promise.all([
       getUsersApi(),
@@ -371,17 +462,9 @@ const UserRolesTab = () => {
       getOfferingsApi({}),
     ])
       .then(([usersRes, progsRes, departmentsRes, offeringsRes]) => {
-        const offerings = offeringsRes.data;
-        const usersWithCourses = usersRes.data.map((u: User) => {
-          if (u.role === "teacher") {
-            const courses = offerings
-              .filter((o: any) => o.teacher === u.id)
-              .map((o: any) => o.course_name);
-            return { ...u, teaching_courses: courses };
-          }
-          return u;
-        });
-        setUsers(usersWithCourses);
+        setUsers(
+          enrichUsersWithCourses(usersRes.data, offeringsRes.data || []),
+        );
         setProgrammes(progsRes.data);
         setDepartments(departmentsRes.data);
       })
@@ -422,26 +505,12 @@ const UserRolesTab = () => {
       };
       if (editForm.password) payload.password = editForm.password;
       await updateUserApi(editUser.id, payload);
-      
-      const [usersRes, offeringsRes] = await Promise.all([
-        getUsersApi(),
-        getOfferingsApi({}),
-      ]);
-      const offerings = offeringsRes.data;
-      const usersWithCourses = usersRes.data.map((u: User) => {
-        if (u.role === "teacher") {
-          const courses = offerings
-            .filter((o: any) => o.teacher === u.id)
-            .map((o: any) => o.course_name);
-          return { ...u, teaching_courses: courses };
-        }
-        return u;
-      });
-      setUsers(usersWithCourses);
+
+      await refreshUsersAndCourses();
       toast.success("User updated!");
       setEditOpen(false);
-    } catch {
-      toast.error("Failed to update user");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || "Failed to update user");
     } finally {
       setSaving(false);
     }
@@ -846,7 +915,10 @@ const UserRolesTab = () => {
               departments={departments}
             />
             {editForm.role === "teacher" && editUser && (
-              <TeacherOfferingsField teacherId={editUser.id} />
+              <TeacherOfferingsField
+                teacherId={editUser.id}
+                onChanged={refreshUsersAndCourses}
+              />
             )}
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">

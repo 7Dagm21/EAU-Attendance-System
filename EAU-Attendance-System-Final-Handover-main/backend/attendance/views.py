@@ -257,7 +257,9 @@ def build_summary_payload(user, params):
     if department_id:
         offerings = offerings.filter(course__department_id=department_id)
     if teacher_id:
-        offerings = offerings.filter(teacher_id=teacher_id)
+        offerings = offerings.filter(
+            Q(teacher_id=teacher_id) | Q(secondary_teachers__id=teacher_id)
+        ).distinct()
 
     settings = SystemSettings.get()
     at_risk_thr = float(settings.at_risk_threshold)
@@ -487,8 +489,40 @@ class LoginView(APIView):
             try:
                 found = User.objects.get(email=identifier)
                 user = authenticate(username=found.username, password=password)
-            except User.DoesNotExist:
+            except (User.DoesNotExist, User.MultipleObjectsReturned):
                 pass
+
+        if not user:
+            # Check if identifier belongs to a Student record
+            student = Student.objects.filter(
+                Q(student_id__iexact=identifier) | Q(email__iexact=identifier)
+            ).first()
+            if student:
+                default_pass = f"{student.student_id}@EAU"
+                user_found = User.objects.filter(
+                    Q(staff_id__iexact=student.student_id) |
+                    Q(username__iexact=student.student_id) |
+                    Q(email__iexact=student.email)
+                ).first()
+                if user_found:
+                    if user_found.check_password(password):
+                        user = user_found
+                    elif password == default_pass:
+                        user_found.set_password(password)
+                        user_found.role = 'student'
+                        user_found.staff_id = student.student_id
+                        user_found.save()
+                        user = user_found
+                elif password == default_pass:
+                    user = User.objects.create(
+                        username=student.student_id,
+                        staff_id=student.student_id,
+                        first_name=student.first_name,
+                        last_name=student.last_name,
+                        email=student.email,
+                        role='student',
+                        password=make_password(password),
+                    )
 
         if not user:
             return Response({'error': 'Invalid credentials'},
@@ -940,6 +974,14 @@ class StudentListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if request.user.role == 'student':
+            student_qs = Student.objects.select_related('programme', 'department').filter(
+                Q(student_id__iexact=request.user.staff_id) |
+                Q(student_id__iexact=request.user.username) |
+                Q(email__iexact=request.user.email)
+            )
+            return Response(StudentSerializer(student_qs, many=True).data)
+
         students = Student.objects.select_related('programme', 'department').all()
         # Scope: filter by student.programme OR by enrolled section's programme.
         # Using enrollment path is more reliable (students may have programme=NULL).
@@ -1036,6 +1078,22 @@ class StudentListView(APIView):
         # Sync the chat ID if they share a parent telegram with another student
         sync_telegram_chat_id(student)
         
+        # Ensure login account exists for student
+        try:
+            User.objects.update_or_create(
+                username=student.student_id,
+                defaults={
+                    'staff_id': student.student_id,
+                    'first_name': student.first_name,
+                    'last_name': student.last_name,
+                    'email': student.email,
+                    'role': 'student',
+                    'password': make_password(f"{student.student_id}@EAU"),
+                }
+            )
+        except Exception:
+            pass
+
         return Response(StudentSerializer(student).data, status=status.HTTP_201_CREATED)
 
 
@@ -1200,6 +1258,22 @@ class StudentBulkImportView(APIView):
                 # Sync the chat ID if they share a parent telegram with another student
                 sync_telegram_chat_id(student)
 
+                # Ensure login account exists for student
+                try:
+                    User.objects.update_or_create(
+                        username=student_id,
+                        defaults={
+                            'staff_id': student_id,
+                            'first_name': first_name,
+                            'last_name': last_name,
+                            'email': email,
+                            'role': 'student',
+                            'password': make_password(f"{student_id}@EAU"),
+                        }
+                    )
+                except Exception:
+                    pass
+
                 # Auto-enroll in the section
                 try:
                     year = int(year_str)
@@ -1340,11 +1414,24 @@ class CourseOfferingListView(APIView):
         offerings = CourseOffering.objects.select_related(
             'course__programme', 'course__department',
             'section__programme', 'section__semester__academic_year', 'teacher'
-        ).all()
+        ).prefetch_related('secondary_teachers').all()
 
         if user.role == 'teacher':
-            offerings = offerings.filter(teacher=user)
-        else:
+            offerings = offerings.filter(Q(teacher=user) | Q(secondary_teachers=user)).distinct()
+        elif user.role == 'student':
+            student = Student.objects.filter(
+                Q(student_id__iexact=user.staff_id) |
+                Q(student_id__iexact=user.username) |
+                Q(email__iexact=user.email)
+            ).first()
+            if student:
+                active_sections = Enrollment.objects.filter(
+                    student=student, status='active'
+                ).values_list('section_id', flat=True)
+                offerings = offerings.filter(section_id__in=active_sections)
+            else:
+                offerings = offerings.none()
+        elif is_elevated(user):
             offerings = apply_programme_scope(
                 offerings, user, 'section__programme_id')
 
@@ -1358,8 +1445,8 @@ class CourseOfferingListView(APIView):
             offerings = offerings.filter(
                 section__programme_id=request.query_params['programme'])
         if request.query_params.get('teacher'):
-            offerings = offerings.filter(
-                teacher_id=request.query_params['teacher'])
+            t_id = request.query_params['teacher']
+            offerings = offerings.filter(Q(teacher_id=t_id) | Q(secondary_teachers__id=t_id)).distinct()
         if request.query_params.get('department'):
             offerings = offerings.filter(
                 course__department_id=request.query_params['department'])
@@ -1386,10 +1473,20 @@ class CourseOfferingListView(APIView):
                 return Response({'error': 'Teacher not found'},
                                 status=status.HTTP_404_NOT_FOUND)
         offering, created = CourseOffering.objects.get_or_create(
-            course=course, section=section, defaults={'teacher': teacher})
-        if not created and teacher:
-            offering.teacher = teacher
-            offering.save()
+            course=course, section=section,
+            defaults={'teacher': teacher}
+        )
+        if not created:
+            if 'teacher_id' in request.data:
+                offering.teacher = teacher
+
+        if 'secondary_teacher_ids' in request.data:
+            sec_ids = request.data.get('secondary_teacher_ids') or []
+            int_ids = [int(x) for x in sec_ids if str(x).isdigit() or isinstance(x, int)]
+            secondary_teachers = User.objects.filter(id__in=int_ids)
+            offering.secondary_teachers.set(secondary_teachers)
+
+        offering.save()
         return Response(CourseOfferingSerializer(offering).data,
                         status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -1408,12 +1505,19 @@ class CourseOfferingDetailView(APIView):
             tid = request.data['teacher_id']
             if tid:
                 try:
-                    offering.teacher = User.objects.get(id=tid)
-                except User.DoesNotExist:
+                    offering.teacher = User.objects.get(id=int(tid))
+                except (User.DoesNotExist, ValueError):
                     return Response({'error': 'Teacher not found'},
                                     status=status.HTTP_404_NOT_FOUND)
             else:
                 offering.teacher = None
+
+        if 'secondary_teacher_ids' in request.data:
+            sec_ids = request.data.get('secondary_teacher_ids') or []
+            int_ids = [int(x) for x in sec_ids if str(x).isdigit() or isinstance(x, int)]
+            secondary_teachers = User.objects.filter(id__in=int_ids)
+            offering.secondary_teachers.set(secondary_teachers)
+
         offering.save()
         return Response(CourseOfferingSerializer(offering).data)
 
@@ -1441,7 +1545,11 @@ class TeachingScheduleListView(APIView):
         if request.query_params.get('offering'):
             slots = slots.filter(course_offering_id=request.query_params['offering'])
         if request.query_params.get('teacher'):
-            slots = slots.filter(course_offering__teacher_id=request.query_params['teacher'])
+            t_id = request.query_params['teacher']
+            slots = slots.filter(
+                Q(course_offering__teacher_id=t_id) |
+                Q(course_offering__secondary_teachers__id=t_id)
+            ).distinct()
         return Response(TeachingScheduleSerializer(slots, many=True).data)
 
     def post(self, request):
@@ -1566,11 +1674,23 @@ class AttendanceListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        user = request.user
         records = AttendanceRecord.objects.select_related(
             'student', 'course_offering__course',
             'course_offering__section').order_by('-date')
-        records = apply_programme_scope(
-            records, request.user, 'course_offering__section__programme_id')
+        if user.role == 'student':
+            student = Student.objects.filter(
+                Q(student_id__iexact=user.staff_id) |
+                Q(student_id__iexact=user.username) |
+                Q(email__iexact=user.email)
+            ).first()
+            if student:
+                records = records.filter(student=student)
+            else:
+                records = records.none()
+        elif is_elevated(user):
+            records = apply_programme_scope(
+                records, user, 'course_offering__section__programme_id')
         if request.query_params.get('offering'):
             records = records.filter(
                 course_offering_id=request.query_params['offering'])
@@ -1610,8 +1730,12 @@ class AttendanceListView(APIView):
             records = records.filter(
                 course_offering__course__department_id=request.query_params['department'])
         if request.query_params.get('teacher'):
+            t_id = request.query_params['teacher']
             records = records.filter(
-                course_offering__teacher_id=request.query_params['teacher'])
+                Q(course_offering__teacher_id=t_id) |
+                Q(course_offering__secondary_teachers__id=t_id) |
+                Q(recorded_by_id=t_id)
+            ).distinct()
         if request.query_params.get('search'):
             q = request.query_params['search']
             records = records.filter(
@@ -1694,10 +1818,11 @@ class AttendanceSubmitView(APIView):
             count += 1
             if status_val == 'absent':
                 absent_students.append(student.full_name)
-                self._handle_absence(student, offering, data['date'], teacher)
+                self._handle_absence(student, offering, data['date'], teacher, session_type=data.get('session_type'))
             elif status_val == 'excused':
                 self._handle_excused(student, offering, data['date'], teacher, comment_val)
-            self._check_threshold(student, offering, teacher)
+            else:
+                self._check_threshold(student, offering, teacher, att_date=data['date'])
 
         section_label = f"Sec {offering.section.name} Y{offering.section.year}"
         absent_count  = len(absent_students)
@@ -1722,7 +1847,7 @@ class AttendanceSubmitView(APIView):
             'course':  offering.course.name,
         }, status=status.HTTP_201_CREATED)
 
-    def _handle_absence(self, student, offering, att_date, teacher):
+    def _handle_absence(self, student, offering, att_date, teacher, session_type='theory'):
         teacher_name = (f"{teacher.first_name} {teacher.last_name}".strip()
                         or teacher.username)
         Notification.objects.create(
@@ -1735,10 +1860,38 @@ class AttendanceSubmitView(APIView):
             f"{offering.course.name} on {att_date}. Logged by {teacher_name}.",
             programme=offering.course.programme,
         )
+
+        summary = calculate_attendance_status(student, offering, cutoff_date=att_date)
+        status_label = None
+        if summary:
+            settings_obj = SystemSettings.get()
+            warning_thr = float(settings_obj.warning_threshold)
+            if summary['projected_final_percentage'] < warning_thr:
+                status_label = 'cannot_sit_final'
+            elif summary['current_percentage'] < warning_thr:
+                status_label = 'at_risk'
+
+            if status_label:
+                level = "CANNOT SIT FINAL EXAM" if status_label == 'cannot_sit_final' else "AT RISK"
+                message = (
+                    f"{level}: {student.full_name} (ID: {student.student_id}) in {offering.course.name} "
+                    f"has current attendance {summary['current_percentage']}% and projected final attendance "
+                    f"{summary['projected_final_percentage']}%."
+                )
+                Notification.objects.create(
+                    recipient=teacher, notification_type='threshold', message=message)
+                notify_elevated(
+                    'threshold', f"{message} Logged by {teacher_name}.",
+                    programme=offering.course.programme)
+
         try:
-            send_absence_alert(student, offering.course, att_date)
-        except Exception:
-            pass
+            send_absence_alert(
+                student, offering.course, att_date,
+                summary=summary, status_label=status_label,
+                session_type=session_type
+            )
+        except Exception as e:
+            print(f"Error sending consolidated absence alert: {e}")
 
     def _handle_excused(self, student, offering, att_date, teacher, comment):
         teacher_name = (f"{teacher.first_name} {teacher.last_name}".strip() or teacher.username)
@@ -1754,13 +1907,12 @@ class AttendanceSubmitView(APIView):
             programme=offering.course.programme,
         )
 
-    def _check_threshold(self, student, offering, teacher):
+    def _check_threshold(self, student, offering, teacher, att_date=None):
         settings_obj   = SystemSettings.get()
-        at_risk_thr    = float(settings_obj.at_risk_threshold)
         warning_thr    = float(settings_obj.warning_threshold)
         teacher_name   = (f"{teacher.first_name} {teacher.last_name}".strip()
                           or teacher.username)
-        summary = calculate_attendance_status(student, offering)
+        summary = calculate_attendance_status(student, offering, cutoff_date=att_date)
         if not summary:
             return
 
@@ -1780,15 +1932,67 @@ class AttendanceSubmitView(APIView):
         notify_elevated(
             'threshold', f"{message} Logged by {teacher_name}.",
             programme=offering.course.programme)
+
+
+class AttendanceDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, record_id):
+        if not is_elevated(request.user):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         try:
-            send_attendance_status_warning(
-                student,
-                offering.course,
-                summary,
-                status_label,
+            record = AttendanceRecord.objects.get(id=record_id)
+            record.delete()
+            return Response({'message': 'Attendance record deleted'})
+        except AttendanceRecord.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    def patch(self, request, record_id):
+        if not is_elevated(request.user):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            record = AttendanceRecord.objects.get(id=record_id)
+        except AttendanceRecord.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'status' in request.data:
+            record.status = request.data['status']
+        if 'hours_attended' in request.data:
+            record.hours_attended = request.data['hours_attended']
+        if 'comment' in request.data:
+            record.comment = request.data['comment']
+        record.save()
+        return Response({'message': 'Attendance record updated', 'record': {
+            'id': record.id,
+            'status': record.status,
+            'hours_attended': record.hours_attended,
+        }})
+
+
+class AttendanceBulkDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not is_elevated(request.user):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        record_ids = request.data.get('record_ids', [])
+        if record_ids:
+            count, _ = AttendanceRecord.objects.filter(id__in=record_ids).delete()
+            return Response({'message': f'{count} attendance records deleted'})
+
+        offering_id = request.data.get('course_offering_id')
+        date_str = request.data.get('date')
+        if offering_id and date_str:
+            qs = AttendanceRecord.objects.filter(
+                course_offering_id=offering_id,
+                date=date_str
             )
-        except Exception:
-            pass
+            count, _ = qs.delete()
+            return Response({'message': f'{count} records deleted for session on {date_str}'})
+
+        return Response({'error': 'record_ids or course_offering_id + date is required'}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 # ─────────────────────────────────────────
@@ -1927,13 +2131,27 @@ class NotificationBulkAbsenceView(APIView):
                 
                 try:
                     student = Student.objects.get(student_id=student_id)
-                    # We create a dummy course object to pass to send_absence_alert
+                    course_obj = Course.objects.filter(name__iexact=course_name).first()
+                    summary = None
+                    status_label = None
+                    if course_obj:
+                        offering = CourseOffering.objects.filter(course=course_obj, section__enrollments__student=student).first()
+                        if offering:
+                            summary = calculate_attendance_status(student, offering, cutoff_date=date_str)
+                            if summary:
+                                warning_thr = float(SystemSettings.get().warning_threshold)
+                                if summary['projected_final_percentage'] < warning_thr:
+                                    status_label = 'cannot_sit_final'
+                                elif summary['current_percentage'] < warning_thr:
+                                    status_label = 'at_risk'
+
                     class DummyCourse:
                         pass
                     dummy_course = DummyCourse()
                     dummy_course.name = course_name
-                    
-                    send_absence_alert(student, dummy_course, date_str)
+                    target_course = course_obj if course_obj else dummy_course
+
+                    send_absence_alert(student, target_course, date_str, summary=summary, status_label=status_label)
                     sent_count += 1
                 except Exception as e:
                     print(f"Failed to send bulk absence for {student_id}: {e}")
@@ -2083,6 +2301,11 @@ class UserDetailView(APIView):
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        if 'username' in request.data and request.data['username'] and request.data['username'] != user.username:
+            new_username = request.data['username'].strip()
+            if User.objects.filter(username=new_username).exclude(id=user_id).exists():
+                return Response({'error': 'Username already taken'}, status=status.HTTP_400_BAD_REQUEST)
+            user.username = new_username
         for field in ['first_name', 'last_name', 'email', 'role', 'staff_id']:
             if field in request.data:
                 setattr(user, field, request.data[field])
@@ -2391,8 +2614,8 @@ class TelegramWebhookView(APIView):
                 # Check if this username exists in our DB
                 # Users might have registered with or without the '@' symbol
                 students = Student.objects.filter(
-                    models.Q(parent_telegram__iexact=username) | 
-                    models.Q(parent_telegram__iexact=f"@{username}")
+                    Q(parent_telegram__iexact=username) | 
+                    Q(parent_telegram__iexact=f"@{username}")
                 )
                 
                 if students.exists():
@@ -2413,6 +2636,6 @@ class TelegramWebhookView(APIView):
             'text': text
         }
         try:
-            requests.post(url, data=payload)
+            requests.post(url, data=payload, verify=False, timeout=10)
         except Exception as e:
             print(f"Error sending telegram message: {e}")

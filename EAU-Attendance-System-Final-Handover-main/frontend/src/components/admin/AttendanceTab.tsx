@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search, Upload } from "lucide-react";
+import { Search, Upload, Trash2, Edit3, AlertTriangle, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,8 +12,19 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { toast } from "sonner";
 import AttendanceImportModal from "@/components/admin/AttendanceImportModal";
-import { getAttendanceApi, getSectionsApi, getSemestersApi, getDepartmentsApi, getUsersApi, getOfferingsApi } from "@/api/axios";
+import {
+  getAttendanceApi,
+  getSectionsApi,
+  getSemestersApi,
+  getDepartmentsApi,
+  getUsersApi,
+  getOfferingsApi,
+  deleteAttendanceRecordApi,
+  bulkDeleteAttendanceRecordsApi,
+  updateAttendanceRecordApi,
+} from "@/api/axios";
 interface Course {
   id: number;
   name: string;
@@ -51,7 +62,10 @@ interface Offering {
   section_name: string;
   section_year: number;
   programme_name: string;
-  teacher_name?: string;
+  teacher?: number | null;
+  teacher_name?: string | null;
+  secondary_teachers?: { id: number; username?: string; first_name?: string; last_name?: string; full_name?: string }[];
+  all_teachers_display?: string;
 }
 
 interface AttendanceTabProps {
@@ -60,17 +74,19 @@ interface AttendanceTabProps {
 }
 
 const statusStyles: Record<string, string> = {
-  present: "bg-primary/10 text-primary border-primary/30",
-  late: "bg-secondary/20 text-secondary-foreground border-secondary/30",
-  excused: "bg-muted text-muted-foreground border-border",
-  unexcused: "bg-destructive/10 text-destructive border-destructive/30",
+  present: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30",
+  late: "bg-amber-500/10 text-amber-600 border-amber-500/30",
+  excused: "bg-blue-500/10 text-blue-600 border-blue-500/30",
+  absent: "bg-rose-500/10 text-rose-600 border-rose-500/30",
+  unexcused: "bg-rose-500/10 text-rose-600 border-rose-500/30",
 };
 
 const statusLabels: Record<string, string> = {
   present: "Present",
   late: "Late",
   excused: "Excused",
-  unexcused: "Unexcused",
+  absent: "Absent",
+  unexcused: "Absent",
 };
 
 const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
@@ -95,7 +111,12 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
   // Import Modal States
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [offerings, setOfferings] = useState<Offering[]>([]);
-  const [selectedOfferingId, setSelectedOfferingId] = useState("");
+  const [selectedOptionKey, setSelectedOptionKey] = useState("");
+  const [selectedTeacherForImport, setSelectedTeacherForImport] = useState<{
+    id?: number;
+    name?: string;
+    role?: string;
+  } | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedOffering, setSelectedOffering] = useState<Offering | undefined>();
 
@@ -105,10 +126,70 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
   const [importCourse, setImportCourse] = useState("");
   const [importSection, setImportSection] = useState("");
 
+  // Delete & Edit State
+  const [deleteGroup, setDeleteGroup] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<any>(null);
+  const [editStatus, setEditStatus] = useState<string>("present");
+  const [editHours, setEditHours] = useState<string>("2.0");
+  const [updating, setUpdating] = useState(false);
+
+  const handleDeleteSession = async () => {
+    if (!deleteGroup) return;
+    setDeleting(true);
+    try {
+      const recordIds = deleteGroup.records.map((r: any) => r.id);
+      await bulkDeleteAttendanceRecordsApi(recordIds);
+      toast.success(`Deleted ${recordIds.length} attendance records for ${deleteGroup.date}`);
+      setRecords((prev) => prev.filter((r) => !recordIds.includes(r.id)));
+      setDeleteGroup(null);
+    } catch (e) {
+      toast.error("Failed to delete attendance session");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteSingleRecord = async (recordId: number, studentName: string) => {
+    if (!confirm(`Delete attendance record for ${studentName}?`)) return;
+    try {
+      await deleteAttendanceRecordApi(recordId);
+      toast.success(`Deleted attendance record for ${studentName}`);
+      setRecords((prev) => prev.filter((r) => r.id !== recordId));
+    } catch (e) {
+      toast.error("Failed to delete record");
+    }
+  };
+
+  const handleUpdateRecord = async () => {
+    if (!editingRecord) return;
+    setUpdating(true);
+    try {
+      await updateAttendanceRecordApi(editingRecord.id, {
+        status: editStatus,
+        hours_attended: parseFloat(editHours) || 2.0,
+      });
+      toast.success(`Updated attendance for ${editingRecord.student_name}`);
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === editingRecord.id
+            ? { ...r, status: editStatus, hours_attended: parseFloat(editHours) || 2.0 }
+            : r
+        )
+      );
+      setEditingRecord(null);
+    } catch (e) {
+      toast.error("Failed to update record");
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const openSelector = async () => {
     setSelectorOpen(true);
     setOfferings([]);
-    setSelectedOfferingId("");
+    setSelectedOptionKey("");
+    setSelectedTeacherForImport(null);
     setImportYear("");
     setImportCourse("");
     setImportSection("");
@@ -136,10 +217,75 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
     return true;
   });
 
+  const classTeacherOptions = useMemo(() => {
+    const list: {
+      key: string;
+      offering: Offering;
+      teacherId?: number;
+      teacherName: string;
+      roleLabel: string;
+      label: string;
+    }[] = [];
+
+    filteredOfferingsForImport.forEach((o) => {
+      let hasTeacher = false;
+
+      // 1. Primary Teacher option
+      if (o.teacher && o.teacher_name) {
+        hasTeacher = true;
+        list.push({
+          key: `${o.id}__primary__${o.teacher}`,
+          offering: o,
+          teacherId: o.teacher,
+          teacherName: o.teacher_name,
+          roleLabel: "Primary",
+          label: `${o.course_name} (Section ${o.section_name}) — ${o.teacher_name} (Primary)`,
+        });
+      }
+
+      // 2. Secondary Teachers (Co-Teachers) options
+      if (o.secondary_teachers && o.secondary_teachers.length > 0) {
+        o.secondary_teachers.forEach((st: any) => {
+          hasTeacher = true;
+          const stName =
+            st.full_name ||
+            `${st.first_name || ""} ${st.last_name || ""}`.trim() ||
+            st.username;
+          list.push({
+            key: `${o.id}__secondary__${st.id}`,
+            offering: o,
+            teacherId: st.id,
+            teacherName: stName,
+            roleLabel: "Co-Teacher",
+            label: `${o.course_name} (Section ${o.section_name}) — ${stName} (Co-Teacher)`,
+          });
+        });
+      }
+
+      // 3. Fallback if unassigned
+      if (!hasTeacher) {
+        list.push({
+          key: `${o.id}__unassigned`,
+          offering: o,
+          teacherName: "Unassigned",
+          roleLabel: "Unassigned",
+          label: `${o.course_name} (Section ${o.section_name}) — Unassigned`,
+        });
+      }
+    });
+
+    return list;
+  }, [filteredOfferingsForImport]);
+
   const handleSelectorNext = () => {
-    const offering = offerings.find(o => String(o.id) === selectedOfferingId);
-    if (offering) {
-      setSelectedOffering(offering);
+    const choice = classTeacherOptions.find((c) => c.key === selectedOptionKey);
+    if (choice) {
+      setSelectedOffering(choice.offering);
+      setSelectedTeacherForImport({
+        id: choice.teacherId,
+        name: choice.teacherName,
+        role: choice.roleLabel,
+      });
       setSelectorOpen(false);
       setImportModalOpen(true);
     }
@@ -221,6 +367,14 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
     filterTeacher,
   ]);
 
+  useEffect(() => {
+    const handleImported = () => {
+      fetchRecords();
+    };
+    window.addEventListener("attendance-imported", handleImported);
+    return () => window.removeEventListener("attendance-imported", handleImported);
+  }, [filterSemester, filterCourse, dateFrom, dateTo, filterSection, filterProgramme, filterDepartment, filterTeacher]);
+
   const filtered = records.filter((r) => {
     if (!search) return true;
     return (
@@ -250,7 +404,30 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
   const isNewRecord = (submittedAt?: string) => {
     if (!submittedAt) return false;
     const submitted = new Date(submittedAt).getTime();
+    if (isNaN(submitted)) return false;
     return Date.now() - submitted < 24 * 60 * 60 * 1000;
+  };
+
+  const formatDateHeading = (dStr?: string) => {
+    if (!dStr) return "—";
+    try {
+      const d = new Date(dStr.includes("T") ? dStr : dStr + "T00:00:00");
+      if (isNaN(d.getTime())) return dStr;
+      return format(d, "EEEE, MMMM d, yyyy");
+    } catch {
+      return dStr;
+    }
+  };
+
+  const formatSubmittedAt = (dStr?: string) => {
+    if (!dStr) return "—";
+    try {
+      const d = new Date(dStr);
+      if (isNaN(d.getTime())) return dStr;
+      return format(d, "MMM d, h:mm a");
+    } catch {
+      return dStr;
+    }
   };
 
   return (
@@ -411,11 +588,11 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
         {!loading &&
           groups.map((group) => (
             <div key={group.key} className="border-b border-border last:border-0">
-              {/* Group header: teacher + full date */}
+              {/* Group header: teacher + full date + Delete Session Button */}
               <div className="bg-muted/40 px-6 py-2.5 flex items-center justify-between flex-wrap gap-2 border-b border-border/60">
                 <div className="flex items-center gap-3 text-sm">
                   <span className="font-medium">
-                    {format(new Date(group.date + "T00:00:00"), "EEEE, MMMM d, yyyy")}
+                    {formatDateHeading(group.date)}
                   </span>
                   <span className="text-muted-foreground">·</span>
                   <span className="text-muted-foreground">
@@ -425,12 +602,24 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
                       : ""}
                   </span>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  Teacher: <span className="font-medium text-foreground">{group.teacher}</span>
-                  {group.records[0]?.department_name && (
-                    <> · {group.records[0].department_name}</>
-                  )}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    Teacher: <span className="font-medium text-foreground">{group.teacher}</span>
+                    {group.records[0]?.department_name && (
+                      <> · {group.records[0].department_name}</>
+                    )}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteGroup(group)}
+                    className="h-7 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 gap-1"
+                    title="Delete entire class session log"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Session</span>
+                  </Button>
+                </div>
               </div>
               <table className="w-full text-sm">
                 <thead className="bg-muted/10">
@@ -449,6 +638,9 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
                     </th>
                     <th className="text-left px-6 py-2 font-medium text-muted-foreground text-xs">
                       Recorded At
+                    </th>
+                    <th className="text-right px-6 py-2 font-medium text-muted-foreground text-xs w-24">
+                      Actions
                     </th>
                   </tr>
                 </thead>
@@ -495,10 +687,34 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
                                   title="Submitted within the last 24 hours"
                                 />
                               )}
-                              {r.submitted_at
-                                ? format(new Date(r.submitted_at), "MMM d, h:mm a")
-                                : "—"}
+                              {formatSubmittedAt(r.submitted_at)}
                             </span>
+                          </td>
+                          <td className="px-6 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingRecord(r);
+                                  setEditStatus(r.status);
+                                  setEditHours(String(r.hours_attended || "2.0"));
+                                }}
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                                title="Edit Status"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteSingleRecord(r.id, r.student_name)}
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600"
+                                title="Delete Record"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -508,6 +724,107 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
             </div>
           ))}
       </CardContent>
+
+      {/* Delete Session Confirmation Dialog */}
+      <Dialog open={!!deleteGroup} onOpenChange={(open) => !open && setDeleteGroup(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              Delete Attendance Session
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-sm text-muted-foreground">
+            <p>
+              Are you sure you want to delete all{" "}
+              <strong className="text-foreground">{deleteGroup?.records?.length || 0}</strong>{" "}
+              attendance records for:
+            </p>
+            <div className="bg-muted/50 p-3 rounded-lg border space-y-1 text-xs text-foreground">
+              <p><strong>Date:</strong> {deleteGroup?.date}</p>
+              <p><strong>Course:</strong> {deleteGroup?.records?.[0]?.course_name}</p>
+              <p><strong>Section:</strong> {deleteGroup?.records?.[0]?.section_name || "—"}</p>
+              <p><strong>Teacher:</strong> {deleteGroup?.teacher}</p>
+            </div>
+            <p className="text-xs text-destructive">
+              This action cannot be undone and will recalculate student attendance statistics.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteGroup(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteSession}
+              disabled={deleting}
+              className="gap-1.5"
+            >
+              <Trash2 className="w-4 h-4" />
+              {deleting ? "Deleting..." : "Delete Session"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Single Record Modal */}
+      <Dialog open={!!editingRecord} onOpenChange={(open) => !open && setEditingRecord(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg flex items-center gap-2">
+              <Edit3 className="w-5 h-5 text-primary" />
+              Edit Attendance Record
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="bg-muted/40 p-3 rounded-lg border text-xs space-y-1">
+              <p><strong>Student:</strong> {editingRecord?.student_name} ({editingRecord?.student_id})</p>
+              <p><strong>Date:</strong> {editingRecord?.date}</p>
+              <p><strong>Course:</strong> {editingRecord?.course_name}</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Status
+              </label>
+              <select
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value)}
+                className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="present">Present</option>
+                <option value="late">Late</option>
+                <option value="excused">Excused</option>
+                <option value="absent">Absent</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Hours Attended
+              </label>
+              <Input
+                type="number"
+                step="0.5"
+                min="0.5"
+                max="10"
+                value={editHours}
+                onChange={(e) => setEditHours(e.target.value)}
+                className="text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingRecord(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateRecord} disabled={updating} className="bg-primary hover:bg-primary/90 gap-1.5">
+              <Check className="w-4 h-4" />
+              {updating ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Select Course Offering Dialog */}
       <Dialog open={selectorOpen} onOpenChange={setSelectorOpen}>
@@ -560,28 +877,28 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
 
             <div className="space-y-2 pt-2 border-t border-border">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Select Class
+                Select Class & Teacher
               </label>
               <select
-                value={selectedOfferingId}
-                onChange={(e) => setSelectedOfferingId(e.target.value)}
+                value={selectedOptionKey}
+                onChange={(e) => setSelectedOptionKey(e.target.value)}
                 className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
               >
-                <option value="">-- Choose a class --</option>
-                {filteredOfferingsForImport.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.course_name} (Section {o.section_name}) - {o.teacher_name || "Unassigned"}
+                <option value="">-- Choose a class & teacher --</option>
+                {classTeacherOptions.map((opt) => (
+                  <option key={opt.key} value={opt.key}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
-              {filteredOfferingsForImport.length === 0 && (
+              {classTeacherOptions.length === 0 && (
                 <p className="text-xs text-destructive">No offerings match your filters.</p>
               )}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelectorOpen(false)}>Cancel</Button>
-            <Button disabled={!selectedOfferingId} onClick={handleSelectorNext} className="bg-primary hover:bg-primary/90">Next</Button>
+            <Button disabled={!selectedOptionKey} onClick={handleSelectorNext} className="bg-primary hover:bg-primary/90">Next</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -590,8 +907,15 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
       {selectedOffering && (
         <AttendanceImportModal
           open={importModalOpen}
-          onClose={() => setImportModalOpen(false)}
+          onClose={() => {
+            setImportModalOpen(false);
+            fetchRecords();
+          }}
+          onSuccess={() => {
+            fetchRecords();
+          }}
           offering={selectedOffering}
+          initialTeacherId={selectedTeacherForImport?.id}
         />
       )}
     </Card>

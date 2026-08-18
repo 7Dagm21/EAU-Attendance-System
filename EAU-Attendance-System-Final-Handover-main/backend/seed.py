@@ -22,11 +22,7 @@ from attendance.models import (
     CourseOffering,
     AttendanceRecord,
     Notification,
-    trigger_notifications
 )
-
-# Disconnect the notification signal during seeding so we don't spam emails/telegrams
-post_save.disconnect(trigger_notifications, sender=AttendanceRecord)
 
 print("Clearing old data...")
 AttendanceRecord.objects.all().delete()

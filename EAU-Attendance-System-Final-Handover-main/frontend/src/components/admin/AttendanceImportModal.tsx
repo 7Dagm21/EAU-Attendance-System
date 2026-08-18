@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -31,12 +31,18 @@ interface Offering {
   section_name: string;
   section_year: number;
   programme_name: string;
+  teacher?: number | null;
+  teacher_name?: string | null;
+  secondary_teachers?: { id: number; username?: string; first_name?: string; last_name?: string; full_name?: string }[];
+  all_teachers_display?: string;
 }
 
 interface AttendanceImportModalProps {
   open: boolean;
   onClose: () => void;
+  onSuccess?: () => void;
   offering: Offering | undefined;
+  initialTeacherId?: number;
 }
 
 type Step = "download" | "upload" | "preview" | "done";
@@ -51,7 +57,9 @@ const STATUS_COLOURS: Record<string, string> = {
 const AttendanceImportModal = ({
   open,
   onClose,
+  onSuccess,
   offering,
+  initialTeacherId,
 }: AttendanceImportModalProps) => {
   const [step, setStep] = useState<Step>("download");
 
@@ -63,6 +71,21 @@ const AttendanceImportModal = ({
   );
   const [customEnd, setCustomEnd] = useState(format(new Date(), "yyyy-MM-dd"));
   const [downloading, setDownloading] = useState(false);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
+
+  useEffect(() => {
+    if (offering) {
+      if (initialTeacherId) {
+        setSelectedTeacherId(String(initialTeacherId));
+      } else if (offering.teacher) {
+        setSelectedTeacherId(String(offering.teacher));
+      } else if (offering.secondary_teachers && offering.secondary_teachers.length > 0) {
+        setSelectedTeacherId(String(offering.secondary_teachers[0].id));
+      } else {
+        setSelectedTeacherId("");
+      }
+    }
+  }, [offering, initialTeacherId]);
 
   // ── Upload/preview state ──────────────────────────────────────────────────
   const fileRef = useRef<HTMLInputElement>(null);
@@ -73,7 +96,7 @@ const AttendanceImportModal = ({
   const [showErrors, setShowErrors] = useState(false);
   const [showPreviewRows, setShowPreviewRows] = useState(false);
 
-  // ── Done state ────────────────────────────────────────────────────────────
+  // ── Done state ────────────────────────────────────────────────────
   const [result, setResult] = useState<any>(null);
 
   const resetModal = () => {
@@ -93,14 +116,21 @@ const AttendanceImportModal = ({
 
   // ── Build download params ─────────────────────────────────────────────────
   const getDownloadParams = () => {
-    if (dateMode === "custom") {
-      return { start_date: customStart, end_date: customEnd };
+    const baseParams: any =
+      dateMode === "custom"
+        ? { start_date: customStart, end_date: customEnd }
+        : {
+            week_start: format(
+              weekOption === "current"
+                ? startOfWeek(new Date(), { weekStartsOn: 1 })
+                : startOfWeek(subWeeks(new Date(), 1), { weekStartsOn: 1 }),
+              "yyyy-MM-dd",
+            ),
+          };
+    if (selectedTeacherId) {
+      baseParams.teacher_id = parseInt(selectedTeacherId);
     }
-    const base =
-      weekOption === "current"
-        ? startOfWeek(new Date(), { weekStartsOn: 1 })
-        : startOfWeek(subWeeks(new Date(), 1), { weekStartsOn: 1 });
-    return { week_start: format(base, "yyyy-MM-dd") };
+    return baseParams;
   };
 
   const getWeekLabel = () => {
@@ -126,7 +156,24 @@ const AttendanceImportModal = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Attendance_${offering.course_name.replace(/\s+/g, "_")}_${format(new Date(), "yyyyMMdd")}.xlsx`;
+      let teacherSuffix = "";
+      if (selectedTeacherId) {
+        if (offering.teacher && String(offering.teacher) === selectedTeacherId) {
+          teacherSuffix = `_${(offering.teacher_name || "Teacher").replace(/\s+/g, "_")}`;
+        } else {
+          const sec = (offering.secondary_teachers || []).find(
+            (st) => String(st.id) === selectedTeacherId,
+          );
+          if (sec) {
+            const secName =
+              sec.full_name ||
+              `${sec.first_name || ""} ${sec.last_name || ""}`.trim() ||
+              sec.username;
+            teacherSuffix = `_${secName.replace(/\s+/g, "_")}`;
+          }
+        }
+      }
+      a.download = `Attendance_${offering.course_name.replace(/\s+/g, "_")}${teacherSuffix}_${format(new Date(), "yyyyMMdd")}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success("Template downloaded! Fill it in and come back to import.");
@@ -175,14 +222,17 @@ const AttendanceImportModal = ({
       if (res.data?.semester_id) {
         sessionStorage.setItem("last_imported_semester_id", String(res.data.semester_id));
         localStorage.removeItem("last_imported_semester_id");
-        window.dispatchEvent(
-          new CustomEvent("attendance-imported", {
-            detail: { semesterId: res.data.semester_id },
-          }),
-        );
+      }
+      window.dispatchEvent(
+        new CustomEvent("attendance-imported", {
+          detail: { semesterId: res.data?.semester_id, offeringId: res.data?.offering_id },
+        }),
+      );
+      if (onSuccess) {
+        onSuccess();
       }
       setStep("done");
-      toast.success(res.data.message);
+      toast.success(res.data.message || "Attendance imported successfully!");
     } catch (e: any) {
       toast.error(e?.response?.data?.error || "Import failed");
     } finally {
@@ -267,6 +317,37 @@ const AttendanceImportModal = ({
                   <li>Upload the filled file and review before confirming.</li>
                 </ol>
               </div>
+
+              {/* Teacher selector for template */}
+              {((offering?.secondary_teachers && offering.secondary_teachers.length > 0) || offering?.teacher_name) && (
+                <div className="space-y-1.5 p-3.5 rounded-xl bg-muted/40 border border-border">
+                  <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">
+                    Select Teacher for Attendance Template Header *
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Choose which teacher's name will appear on the generated attendance template:
+                  </p>
+                  <select
+                    value={selectedTeacherId}
+                    onChange={(e) => setSelectedTeacherId(e.target.value)}
+                    className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background font-medium outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {offering?.teacher && (
+                      <option value={String(offering.teacher)}>
+                        {offering.teacher_name || "Primary Teacher"} (Primary)
+                      </option>
+                    )}
+                    {(offering?.secondary_teachers || []).map((st) => (
+                      <option key={st.id} value={String(st.id)}>
+                        {st.full_name || `${st.first_name || ""} ${st.last_name || ""}`.trim() || st.username} (Co-Teacher)
+                      </option>
+                    ))}
+                    {!offering?.teacher && (!offering?.secondary_teachers || offering.secondary_teachers.length === 0) && (
+                      <option value="">Current User / Default</option>
+                    )}
+                  </select>
+                </div>
+              )}
 
               {/* Date range selection */}
               <div className="space-y-3">

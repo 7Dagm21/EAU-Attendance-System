@@ -223,7 +223,10 @@ class CourseOffering(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='offerings')
     section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name='offerings')
     teacher = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True, related_name='offerings'
+        User, on_delete=models.SET_NULL, null=True, related_name='primary_offerings'
+    )
+    secondary_teachers = models.ManyToManyField(
+        User, blank=True, related_name='secondary_offerings'
     )
 
     def __str__(self):
@@ -360,17 +363,6 @@ class SystemSettings(models.Model):
         self.pk = 1
         super().save(*args, **kwargs)
 
+
     def __str__(self):
         return "System Settings"
-
-
-# ─────────────────────────────────────────
-# SIGNALS
-# ─────────────────────────────────────────
-from .notifications import send_attendance_alert  # noqa: E402
-
-
-@receiver(post_save, sender=AttendanceRecord)
-def trigger_notifications(sender, instance, created, **kwargs):
-    if instance.status == 'absent':
-        send_attendance_alert(instance)

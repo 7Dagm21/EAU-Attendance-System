@@ -41,6 +41,7 @@ services:
     command: >
       sh -c "
       python manage.py migrate &&
+      python manage.py setup_telegram_webhook &&
       gunicorn sams.wsgi:application --bind 0.0.0.0:8000
       "
 
@@ -54,7 +55,7 @@ services:
       - "80:80"
 
     environment:
-      VITE_API_URL: http://10.252.8.33:8000
+      VITE_API_URL: ${VITE_API_URL:-}
 
     depends_on:
       - backend

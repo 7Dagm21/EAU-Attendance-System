@@ -115,8 +115,9 @@ interface Offering {
   programme_name: string;
   teacher: number | null;
   teacher_name: string | null;
+  secondary_teachers?: { id: number; username: string; first_name: string; last_name: string; full_name?: string }[];
+  all_teachers_display?: string;
   semester_label: string;
-  session_type: string;
 }
 interface Course {
   id: number;
@@ -2180,14 +2181,19 @@ const OfferingsPanel = ({
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Offering | null>(null);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    course_id: string;
+    section_id: string;
+    teacher_id: string;
+    secondary_teacher_ids: number[];
+  }>({
     course_id: "",
     section_id: "",
     teacher_id: "",
-    session_type: "theory",
+    secondary_teacher_ids: [],
   });
   const [editTeacher, setEditTeacher] = useState("");
-  const [editSessionType, setEditSessionType] = useState("theory");
+  const [editSecondaryTeachers, setEditSecondaryTeachers] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
 
   const filteredSections = sections.filter(
@@ -2205,12 +2211,12 @@ const OfferingsPanel = ({
         course_id: parseInt(form.course_id),
         section_id: parseInt(form.section_id),
         teacher_id: form.teacher_id ? parseInt(form.teacher_id) : undefined,
-        session_type: form.session_type,
+        secondary_teacher_ids: form.secondary_teacher_ids,
       });
       setOfferings((p: Offering[]) => [...p, r.data]);
       toast.success("Offering created!");
       setOpen(false);
-      setForm({ course_id: "", section_id: "", teacher_id: "", session_type: "theory" });
+      setForm({ course_id: "", section_id: "", teacher_id: "", secondary_teacher_ids: [] });
     } catch (e: any) {
       toast.error(e?.response?.data?.error || "Failed");
     } finally {
@@ -2223,16 +2229,16 @@ const OfferingsPanel = ({
     setSaving(true);
     try {
       const r = await updateOfferingApi(editing.id, {
-        teacher_id: editTeacher ? parseInt(editTeacher) : undefined,
-        session_type: editSessionType,
+        teacher_id: editTeacher ? parseInt(editTeacher) : null,
+        secondary_teacher_ids: editSecondaryTeachers,
       });
       setOfferings((p: Offering[]) =>
         p.map((o: Offering) => (o.id === editing.id ? r.data : o)),
       );
-      toast.success("Teacher updated!");
+      toast.success("Teachers updated!");
       setEditOpen(false);
-    } catch {
-      toast.error("Failed");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || "Failed to update teachers");
     } finally {
       setSaving(false);
     }
@@ -2315,7 +2321,7 @@ const OfferingsPanel = ({
                   Semester
                 </th>
                 <th className="text-left px-6 py-3 font-medium text-muted-foreground">
-                  Teacher
+                  Teachers
                 </th>
                 <th className="text-right px-6 py-3 font-medium text-muted-foreground">
                   Actions
@@ -2348,14 +2354,28 @@ const OfferingsPanel = ({
                     {o.semester_label}
                   </td>
                   <td className="px-6 py-4 text-muted-foreground">
-                    <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded mr-2">
-                        {o.session_type === "practical" ? "Practical" : "Theory"}
-                      </span>
-                    {o.teacher_name || (
-                      <span className="text-destructive/70 text-xs">
-                        Unassigned
-                      </span>
-                    )}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {o.teacher_name ? (
+                          <span className="font-medium text-foreground text-xs">
+                            {o.teacher_name} <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-normal">Primary</span>
+                          </span>
+                        ) : (
+                          <span className="text-destructive/70 text-xs">
+                            Unassigned
+                          </span>
+                        )}
+                      </div>
+                      {o.secondary_teachers && o.secondary_teachers.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {o.secondary_teachers.map((st: any) => (
+                            <span key={st.id} className="text-[11px] bg-muted/70 text-muted-foreground px-1.5 py-0.5 rounded border border-border/40">
+                              {st.full_name || `${st.first_name || ""} ${st.last_name || ""}`.trim() || st.username || "Teacher"} <span className="text-[10px] text-muted-foreground/70">(Co-Teacher)</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -2363,7 +2383,7 @@ const OfferingsPanel = ({
                         onClick={() => {
                           setEditing(o);
                           setEditTeacher(o.teacher ? String(o.teacher) : "");
-                          setEditSessionType(o.session_type || "theory");
+                          setEditSecondaryTeachers(o.secondary_teachers ? o.secondary_teachers.map((st: any) => st.id) : []);
                           setEditOpen(true);
                         }}
                         className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
@@ -2428,12 +2448,17 @@ const OfferingsPanel = ({
               </select>
             </div>
             <div className="space-y-1.5">
-              <p className={labelCls}>Teacher</p>
+              <p className={labelCls}>Primary Teacher</p>
               <select
                 value={form.teacher_id}
-                onChange={(e) =>
-                  setForm({ ...form, teacher_id: e.target.value })
-                }
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm({
+                    ...form,
+                    teacher_id: val,
+                    secondary_teacher_ids: form.secondary_teacher_ids.filter((id) => String(id) !== val),
+                  });
+                }}
                 className={inputCls}
               >
                 <option value="">Assign later</option>
@@ -2443,6 +2468,36 @@ const OfferingsPanel = ({
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="space-y-1.5">
+              <p className={labelCls}>Secondary Teachers / Co-Teachers (Optional)</p>
+              <div className="max-h-32 overflow-y-auto border border-input rounded-lg p-2.5 space-y-1.5 bg-background">
+                {teachers
+                  .filter((t: User) => String(t.id) !== form.teacher_id)
+                  .map((t: User) => {
+                    const isChecked = form.secondary_teacher_ids.includes(t.id);
+                    return (
+                      <label key={t.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/40 p-1 rounded">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setForm({ ...form, secondary_teacher_ids: [...form.secondary_teacher_ids, t.id] });
+                            } else {
+                              setForm({ ...form, secondary_teacher_ids: form.secondary_teacher_ids.filter((id) => id !== t.id) });
+                            }
+                          }}
+                          className="rounded border-input text-primary focus:ring-primary h-3.5 w-3.5"
+                        />
+                        <span>{t.full_name}</span>
+                      </label>
+                    );
+                  })}
+                {teachers.filter((t: User) => String(t.id) !== form.teacher_id).length === 0 && (
+                  <p className="text-xs text-muted-foreground py-1">No additional teachers available</p>
+                )}
+              </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setOpen(false)}>
@@ -2461,19 +2516,23 @@ const OfferingsPanel = ({
       </Dialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-display">Assign Teacher</DialogTitle>
+            <DialogTitle className="font-display">Assign Teachers</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <p className="text-sm text-muted-foreground">
               {editing?.course_name} — Sec {editing?.section_name}
             </p>
             <div className="space-y-1.5">
-              <p className={labelCls}>Teacher</p>
+              <p className={labelCls}>Primary Teacher</p>
               <select
                 value={editTeacher}
-                onChange={(e) => setEditTeacher(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setEditTeacher(val);
+                  setEditSecondaryTeachers(editSecondaryTeachers.filter((id) => String(id) !== val));
+                }}
                 className={inputCls}
               >
                 <option value="">Unassigned</option>
@@ -2483,6 +2542,36 @@ const OfferingsPanel = ({
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="space-y-1.5">
+              <p className={labelCls}>Secondary Teachers / Co-Teachers</p>
+              <div className="max-h-36 overflow-y-auto border border-input rounded-lg p-2.5 space-y-1.5 bg-background">
+                {teachers
+                  .filter((t: User) => String(t.id) !== editTeacher)
+                  .map((t: User) => {
+                    const isChecked = editSecondaryTeachers.includes(t.id);
+                    return (
+                      <label key={t.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/40 p-1 rounded">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setEditSecondaryTeachers([...editSecondaryTeachers, t.id]);
+                            } else {
+                              setEditSecondaryTeachers(editSecondaryTeachers.filter((id) => id !== t.id));
+                            }
+                          }}
+                          className="rounded border-input text-primary focus:ring-primary h-3.5 w-3.5"
+                        />
+                        <span>{t.full_name}</span>
+                      </label>
+                    );
+                  })}
+                {teachers.filter((t: User) => String(t.id) !== editTeacher).length === 0 && (
+                  <p className="text-xs text-muted-foreground py-1">No additional teachers available</p>
+                )}
+              </div>
             </div>
             {editing && <ScheduleSlotEditor offeringId={editing.id} />}
             <div className="flex justify-end gap-2 pt-2">
@@ -2494,7 +2583,7 @@ const OfferingsPanel = ({
                 disabled={saving}
                 className="bg-primary hover:bg-primary/90"
               >
-                {saving ? "Saving..." : "Save"}
+                {saving ? "Saving..." : "Save Teachers"}
               </Button>
             </div>
           </div>

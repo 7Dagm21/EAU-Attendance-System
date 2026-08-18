@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://10.252.8.33/api";
+const API_BASE_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8000/api`;
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },
@@ -212,11 +212,14 @@ export const createOfferingApi = (data: {
   course_id: number;
   section_id: number;
   teacher_id?: number;
-  session_type?: string;
+  secondary_teacher_ids?: number[];
 }) => api.post("/offerings/", data);
 export const updateOfferingApi = (
   id: number,
-  data: { teacher_id?: number | null; session_type?: string },
+  data: {
+    teacher_id?: number | null;
+    secondary_teacher_ids?: number[];
+  },
 ) => api.patch(`/offerings/${id}/`, data);
 export const deleteOfferingApi = (id: number) =>
   api.delete(`/offerings/${id}/`);
@@ -247,6 +250,16 @@ export const getAttendanceApi = (params?: {
   date_to?: string;
   search?: string;
 }) => api.get("/attendance/", { params });
+export const deleteAttendanceRecordApi = (id: number) =>
+  api.delete(`/attendance/${id}/`);
+export const updateAttendanceRecordApi = (
+  id: number,
+  data: { status?: string; hours_attended?: number; comment?: string },
+) => api.patch(`/attendance/${id}/`, data);
+export const bulkDeleteAttendanceRecordsApi = (recordIds: number[]) =>
+  api.post("/attendance/bulk-delete/", { record_ids: recordIds });
+export const deleteAttendanceSessionApi = (offeringId: number, date: string) =>
+  api.post("/attendance/bulk-delete/", { course_offering_id: offeringId, date });
 export const submitAttendanceApi = (data: {
   course_offering_id: number;
   date: string;
@@ -311,26 +324,34 @@ export const deleteDepartmentApi = (id: number) =>
 // ── Attendance Excel ──────────────────────────────────────────────────────────
 export const downloadAttendanceTemplateApi = (
   offeringId: number,
-  params?: { week_start?: string; start_date?: string; end_date?: string },
+  params?: {
+    week_start?: string;
+    start_date?: string;
+    end_date?: string;
+    teacher_id?: number;
+    session_hours?: number;
+  },
 ) =>
   api.get(`/attendance/template/${offeringId}/`, {
     params,
     responseType: "blob",
   });
 
-export const previewAttendanceImportApi = (file: File) => {
+export const previewAttendanceImportApi = (file: File, session_hours?: number) => {
   const fd = new FormData();
   fd.append("file", file);
   fd.append("preview_only", "true");
+  if (session_hours) fd.append("session_hours", String(session_hours));
   return api.post("/attendance/import/", fd, {
     headers: { "Content-Type": "multipart/form-data" },
   });
 };
 
-export const submitAttendanceImportApi = (file: File) => {
+export const submitAttendanceImportApi = (file: File, session_hours?: number) => {
   const fd = new FormData();
   fd.append("file", file);
   fd.append("preview_only", "false");
+  if (session_hours) fd.append("session_hours", String(session_hours));
   return api.post("/attendance/import/", fd, {
     headers: { "Content-Type": "multipart/form-data" },
   });
@@ -388,6 +409,25 @@ export const downloadReportApi = async (
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(objectUrl);
+};
+
+export const downloadStudentReportApi = (
+  studentId: number,
+  params?: {
+    rpt_format?: "pdf" | "csv";
+    semester?: number;
+    offering?: number;
+    start_date?: string;
+    end_date?: string;
+  },
+) => {
+  return downloadReportApi(
+    "student",
+    studentId,
+    params?.rpt_format || "pdf",
+    "full",
+    params,
+  );
 };
 
 export const getSummaryReportApi = (params?: {

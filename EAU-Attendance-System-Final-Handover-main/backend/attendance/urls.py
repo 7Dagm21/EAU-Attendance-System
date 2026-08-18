@@ -56,6 +56,8 @@ urlpatterns = [
 
     # ── Attendance ────────────────────────────────────
     path('attendance/',                             views.AttendanceListView.as_view()),
+    path('attendance/<int:record_id>/',             views.AttendanceDetailView.as_view()),
+    path('attendance/bulk-delete/',                 views.AttendanceBulkDeleteView.as_view()),
     path('attendance/submit/',                      views.AttendanceSubmitView.as_view()),
     path('attendance/template/<int:offering_id>/',  views_excel.AttendanceTemplateView.as_view()),
     path('attendance/import/',                      views_excel.AttendanceImportView.as_view()),
