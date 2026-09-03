@@ -38,7 +38,8 @@ from .reports import (
     generate_course_pdf,
     generate_course_csv, generate_student_pdf, generate_student_csv,
     get_offering_student_report_data, build_offering_report_aggregates,
-    generate_offering_filtered_csv,
+    generate_offering_filtered_csv, generate_offering_filtered_xlsx,
+    generate_student_xlsx, generate_summary_overview_xlsx,
     generate_summary_overview_csv, generate_summary_overview_pdf,
     calc_attendance, is_gate_open, LATE_DEDUCTION, ACTIVATION_THRESHOLD,
 )
@@ -466,6 +467,31 @@ def build_summary_payload(user, params):
 # ─────────────────────────────────────────
 # AUTH
 # ─────────────────────────────────────────
+class PublicUserListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        role = request.query_params.get('role')
+        users_qs = User.objects.all()
+        if role:
+            users_qs = users_qs.filter(role=role)
+        users_data = []
+        for u in users_qs:
+            label = u.full_name or u.username
+            if u.role == 'dean' and u.managed_programme:
+                label += f" - Dean of {u.managed_programme.name}"
+            elif u.role == 'dept_head' and u.managed_department:
+                label += f" - Dept Head ({u.managed_department.name})"
+            users_data.append({
+                'id': u.id,
+                'username': u.username,
+                'full_name': u.full_name,
+                'role': u.role,
+                'display': label,
+            })
+        return Response(users_data)
+
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -474,26 +500,42 @@ class LoginView(APIView):
                       request.data.get('staff_id') or
                       request.data.get('email'))
         password = request.data.get('password')
-        if not identifier or not password:
-            return Response({'error': 'Credentials required'},
+        role = request.data.get('role')
+
+        if not password:
+            return Response({'error': 'Password is required'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        user = authenticate(username=identifier, password=password)
-        if not user:
-            try:
-                found = User.objects.get(staff_id=identifier)
-                user = authenticate(username=found.username, password=password)
-            except User.DoesNotExist:
-                pass
-        if not user:
-            try:
-                found = User.objects.get(email=identifier)
-                user = authenticate(username=found.username, password=password)
-            except (User.DoesNotExist, User.MultipleObjectsReturned):
-                pass
+        user = None
 
-        if not user:
-            # Check if identifier belongs to a Student record
+        # 1. Try standard Django authentication by username / identifier
+        if identifier:
+            user = authenticate(username=identifier, password=password)
+            if not user:
+                try:
+                    found = User.objects.get(staff_id=identifier)
+                    user = authenticate(username=found.username, password=password)
+                except User.DoesNotExist:
+                    pass
+            if not user:
+                try:
+                    found = User.objects.get(email=identifier)
+                    user = authenticate(username=found.username, password=password)
+                except (User.DoesNotExist, User.MultipleObjectsReturned):
+                    pass
+
+        # 2. If no user found yet, match active users by role + password check
+        if not user and password:
+            candidates = User.objects.filter(is_active=True)
+            if role:
+                candidates = candidates.filter(role=role)
+            for candidate in candidates:
+                if candidate.check_password(password):
+                    user = candidate
+                    break
+
+        # 3. Check student default password format (e.g. UGR/20002/24@EAU)
+        if not user and identifier:
             student = Student.objects.filter(
                 Q(student_id__iexact=identifier) | Q(email__iexact=identifier)
             ).first()
@@ -514,6 +556,32 @@ class LoginView(APIView):
                         user_found.save()
                         user = user_found
                 elif password == default_pass:
+                    user = User.objects.create(
+                        username=student.student_id,
+                        staff_id=student.student_id,
+                        first_name=student.first_name,
+                        last_name=student.last_name,
+                        email=student.email,
+                        role='student',
+                        password=make_password(password),
+                    )
+
+        if not user and password and "@EAU" in password:
+            student_id = password.replace("@EAU", "").strip()
+            student = Student.objects.filter(student_id__iexact=student_id).first()
+            if student:
+                user_found = User.objects.filter(
+                    Q(staff_id__iexact=student.student_id) |
+                    Q(username__iexact=student.student_id) |
+                    Q(email__iexact=student.email)
+                ).first()
+                if user_found:
+                    user_found.set_password(password)
+                    user_found.role = 'student'
+                    user_found.staff_id = student.student_id
+                    user_found.save()
+                    user = user_found
+                else:
                     user = User.objects.create(
                         username=student.student_id,
                         staff_id=student.student_id,
@@ -1099,8 +1167,8 @@ class StudentListView(APIView):
 
 def sync_telegram_chat_id(student):
     try:
-        if student.parent_telegram:
-            base_username = student.parent_telegram.lstrip('@')
+        if student.parent_telegram and student.parent_telegram.strip():
+            base_username = student.parent_telegram.lstrip('@').strip()
             
             # Check for another student with the same telegram username that already has a chat_id
             sibling = Student.objects.filter(
@@ -1109,9 +1177,14 @@ def sync_telegram_chat_id(student):
                 ~Q(parent_telegram_chat_id='')
             ).exclude(id=student.id).first()
             
-            if sibling:
-                student.parent_telegram_chat_id = sibling.parent_telegram_chat_id
-                student.save(update_fields=['parent_telegram_chat_id'])
+            if sibling and sibling.parent_telegram_chat_id:
+                if student.parent_telegram_chat_id != sibling.parent_telegram_chat_id:
+                    student.parent_telegram_chat_id = sibling.parent_telegram_chat_id
+                    Student.objects.filter(id=student.id).update(parent_telegram_chat_id=sibling.parent_telegram_chat_id)
+        else:
+            if student.parent_telegram_chat_id:
+                student.parent_telegram_chat_id = None
+                Student.objects.filter(id=student.id).update(parent_telegram_chat_id=None)
     except Exception:
         # Ignore errors so it doesn't crash the main save request
         pass
@@ -1127,6 +1200,14 @@ class StudentDetailView(APIView):
             student = Student.objects.get(id=student_id)
         except Student.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+        old_telegram = (student.parent_telegram or '').lstrip('@').strip().lower()
+        if 'parent_telegram' in request.data:
+            new_telegram_raw = request.data['parent_telegram'] or ''
+            new_telegram = new_telegram_raw.lstrip('@').strip().lower()
+            if old_telegram != new_telegram:
+                student.parent_telegram_chat_id = None
+
         for field in ['first_name', 'last_name', 'email', 'student_id',
                       'parent_email', 'parent_telegram', 'is_active']:
             if field in request.data:
@@ -1611,7 +1692,6 @@ class CourseOfferingSummaryView(APIView):
             offering = CourseOffering.objects.get(id=offering_id)
         except CourseOffering.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
-        settings = SystemSettings.get()
         report_type = request.query_params.get('type', 'full')
         student_id = request.query_params.get('student')
         start_date = parse_report_date(request.query_params.get('start_date'))
@@ -1620,6 +1700,17 @@ class CourseOfferingSummaryView(APIView):
             end_date = date.today()
             start_date = end_date - timedelta(days=7)
 
+        teacher_param = request.query_params.get('teacher') or request.query_params.get('teacher_id')
+        teacher_id_filter = None
+        if teacher_param and teacher_param != 'all':
+            try:
+                teacher_id_filter = int(teacher_param)
+            except ValueError:
+                pass
+        elif request.user.role == 'teacher':
+            teacher_id_filter = request.user.id
+
+        settings = SystemSettings.get()
         rows = get_offering_student_report_data(
             offering,
             start_date=start_date,
@@ -2450,7 +2541,20 @@ class CourseOfferingReportView(APIView):
             if student:
                 filename = f"{filename}_{student.student_id}"
 
-            if report_format == 'csv':
+            if report_format in ['excel', 'xlsx']:
+                return generate_offering_filtered_xlsx(
+                    offering,
+                    summary,
+                    aggregates,
+                    f"{filename}.xlsx",
+                    {
+                        'report_type': report_type,
+                        'start_date': str(start_date) if start_date else None,
+                        'end_date': str(end_date) if end_date else None,
+                        'student_label': f"{student.full_name} ({student.student_id})" if student else None,
+                    },
+                )
+            elif report_format == 'csv':
                 return generate_offering_filtered_csv(
                     offering,
                     summary,
@@ -2551,7 +2655,14 @@ class StudentReportView(APIView):
                                     .select_related('course_offering__course')
                                     .order_by('date')
             ]
-            if report_format == 'csv':
+            if report_format in ['excel', 'xlsx']:
+                filter_meta_stu = {
+                    'report_type': report_type,
+                    'start_date': str(start_date) if start_date else None,
+                    'end_date': str(end_date) if end_date else None,
+                }
+                return generate_student_xlsx(student, course_summaries, filter_meta=filter_meta_stu)
+            elif report_format == 'csv':
                 filter_meta_stu = {
                     'report_type': report_type,
                     'start_date': str(start_date) if start_date else None,
@@ -2581,6 +2692,8 @@ class SummaryReportView(APIView):
     def get(self, request):
         report_format = request.query_params.get('rpt_format')
         payload = build_summary_payload(request.user, request.query_params)
+        if report_format in ['excel', 'xlsx']:
+            return generate_summary_overview_xlsx(payload, "attendance_summary_overview.xlsx")
         if report_format == 'csv':
             return generate_summary_overview_csv(payload, "attendance_summary_overview.csv")
         if report_format == 'pdf':
@@ -2611,18 +2724,17 @@ class TelegramWebhookView(APIView):
                     self.send_telegram_message(chat_id, "Welcome! To link your account, you must set a Telegram username in your Telegram settings, and ensure the admin has registered it.")
                     return Response({"status": "ok"})
                 
-                # Check if this username exists in our DB
-                # Users might have registered with or without the '@' symbol
+                clean_u = (username or '').lstrip('@').strip()
                 students = Student.objects.filter(
-                    Q(parent_telegram__iexact=username) | 
-                    Q(parent_telegram__iexact=f"@{username}")
+                    Q(parent_telegram__iexact=clean_u) | 
+                    Q(parent_telegram__iexact=f"@{clean_u}")
                 )
                 
                 if students.exists():
                     students.update(parent_telegram_chat_id=str(chat_id))
-                    self.send_telegram_message(chat_id, f"Welcome @{username}! Your account has been successfully linked. You will now receive attendance notifications here.")
+                    self.send_telegram_message(chat_id, f"Welcome @{clean_u}! Your account has been successfully linked. You will now receive attendance notifications here.")
                 else:
-                    self.send_telegram_message(chat_id, f"Welcome! We couldn't find a student record linked to your username (@{username}). Please ask the administration to register your Telegram username.")
+                    self.send_telegram_message(chat_id, f"Welcome! We couldn't find a student record linked to your username (@{clean_u}). Please ask the administration to register your Telegram username.")
         
         return Response({"status": "ok"})
         

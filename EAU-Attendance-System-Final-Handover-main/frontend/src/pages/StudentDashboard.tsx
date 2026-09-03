@@ -533,7 +533,7 @@ export default function StudentDashboard() {
                           }`}
                         >
                           {isCannotSit
-                            ? "Cannot Sit Final"
+                            ? "Not Eligible for Final Exam"
                             : isAtRisk
                             ? "At Risk"
                             : isWarning

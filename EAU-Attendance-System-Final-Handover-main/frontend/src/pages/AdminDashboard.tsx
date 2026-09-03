@@ -15,12 +15,14 @@ import AttendanceTab from "@/components/admin/AttendanceTab";
 import UserRolesTab from "@/components/admin/UserRolesTab";
 import SettingsTab from "@/components/admin/SettingsTab";
 import SetupTab from "@/components/admin/SetupTab";
+import { Building2, Filter } from "lucide-react";
 import {
   getCoursesApi,
   getStudentsApi,
   getNotificationsApi,
   markNotificationReadApi,
   getProgrammesApi,
+  getDepartmentsApi,
   getStatsApi,
   getAtRiskApi,
   getSemestersApi,
@@ -49,7 +51,8 @@ export interface Course {
   programme_name: string;
   year: number;
   semester?: number;
-  is_active?: boolean;
+  department_name?: string;
+  department?: number;
 }
 export interface Programme {
   id: number;
@@ -66,22 +69,32 @@ export interface Notification {
 const AdminDashboard = () => {
   const { user, role } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [students, setStudents] = useState<any[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
-  const [programmes, setProgrammes] = useState<Programme[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [students, setStudents] = useState<
-    { id: number; full_name: string; student_id: string }[]
-  >([]);
-  const [stats, setStats] = useState({
+  const [programmes, setProgrammes] = useState<any[]>([]);
+  const [deanDepartments, setDeanDepartments] = useState<{ id: number; name: string }[]>([]);
+  const [selectedDeanDept, setSelectedDeanDept] = useState<string>("");
+  const [stats, setStats] = useState<{
+    total_students: number;
+    total_courses: number;
+    total_programmes: number;
+    active_enrollments: number;
+    status_distribution?: {
+      present: number;
+      late: number;
+      excused: number;
+      absent: number;
+    };
+  }>({
     total_students: 0,
     total_courses: 0,
-    active_enrollments: 0,
     total_programmes: 0,
-    status_distribution: { present: 0, late: 0, excused: 0, absent: 0 },
+    active_enrollments: 0,
   });
+  const [loading, setLoading] = useState(true);
   const [atRiskCount, setAtRiskCount] = useState(0);
   const [currentSemesterId, setCurrentSemesterId] = useState<
     number | undefined
@@ -93,16 +106,31 @@ const AdminDashboard = () => {
     absent: number;
   } | null>(null);
 
-  // Build scope filter params for dean and dept_head
+  const u = user as any;
+  const deanProgrammeId = role === "dean" ? u?.managed_programme : null;
+
+  useEffect(() => {
+    if (role === "dean" && deanProgrammeId) {
+      getDepartmentsApi({ programme: deanProgrammeId, active_only: true })
+        .then((res) => setDeanDepartments(res.data || []))
+        .catch((e) => console.error(e));
+    }
+  }, [role, deanProgrammeId]);
+
+  // Dynamic scope filter params for dean and dept_head
   const scopeParams: Record<string, any> = (() => {
     if (!user) return {};
-    const u = user as any;
-    if (role === "dean" && u.managed_programme)
-      return { programme: u.managed_programme };
+    if (role === "dean" && u.managed_programme) {
+      const params: Record<string, any> = { programme: u.managed_programme };
+      if (selectedDeanDept) params.department = selectedDeanDept;
+      return params;
+    }
     if (role === "dept_head") {
-      // dept_head has managed_department_programme (the programme their dept belongs to)
       const progId = u.managed_department_programme || u.managed_programme;
-      if (progId) return { programme: progId };
+      const params: Record<string, any> = {};
+      if (u.managed_department) params.department = u.managed_department;
+      if (progId) params.programme = progId;
+      return params;
     }
     return {};
   })();
@@ -116,55 +144,60 @@ const AdminDashboard = () => {
     }
   };
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const semRes = await getSemestersApi({ current: true });
-        const currentSemester = semRes.data?.[0];
-        if (currentSemester) setCurrentSemesterId(currentSemester.id);
-        const semId = currentSemester?.id;
-        const baseParams = semId
-          ? { semester: semId, ...scopeParams }
-          : scopeParams;
+  const fetchData = async () => {
+    try {
+      const semRes = await getSemestersApi({ current: true });
+      const currentSemester = semRes.data?.[0];
+      if (currentSemester) setCurrentSemesterId(currentSemester.id);
+      const semId = currentSemester?.id;
+      const baseParams = semId
+        ? { semester: semId, ...scopeParams }
+        : scopeParams;
 
-        // Build programme-scoped params for courses and students
-        const courseParams: Record<string, any> = { active_only: true };
-        const studentParams: Record<string, any> = {};
-        if (scopeParams.programme) {
-          courseParams.programme = scopeParams.programme;
-          studentParams.programme = scopeParams.programme;
-        }
-
-        const results = await Promise.allSettled([
-          getCoursesApi(courseParams),
-          getStudentsApi(studentParams),
-          getNotificationsApi(),
-          getProgrammesApi({ active_only: true }),
-          getStatsApi(baseParams),
-          getAtRiskApi(baseParams),
-        ]);
-
-        const [
-          coursesRes,
-          studentsRes,
-          notifRes,
-          programmesRes,
-          statsRes,
-          atRiskRes,
-        ] = results;
-
-        if (coursesRes.status === 'fulfilled') setCourses(coursesRes.value.data);
-        if (studentsRes.status === 'fulfilled') setStudents(studentsRes.value.data || []);
-        if (notifRes.status === 'fulfilled') setNotifications(notifRes.value.data.notifications || []);
-        if (programmesRes.status === 'fulfilled') setProgrammes(programmesRes.value.data);
-        if (statsRes.status === 'fulfilled') setStats(statsRes.value.data);
-        if (atRiskRes.status === 'fulfilled') setAtRiskCount(atRiskRes.value.data.count || 0);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
+      // Build programme and department scoped params for courses and students
+      const courseParams: Record<string, any> = { active_only: true };
+      const studentParams: Record<string, any> = {};
+      if (scopeParams.programme) {
+        courseParams.programme = scopeParams.programme;
+        studentParams.programme = scopeParams.programme;
       }
-    };
+      if (scopeParams.department) {
+        courseParams.department = scopeParams.department;
+        studentParams.department = scopeParams.department;
+      }
+
+      const results = await Promise.allSettled([
+        getCoursesApi(courseParams),
+        getStudentsApi(studentParams),
+        getNotificationsApi(),
+        getProgrammesApi({ active_only: true }),
+        getStatsApi(baseParams),
+        getAtRiskApi(baseParams),
+      ]);
+
+      const [
+        coursesRes,
+        studentsRes,
+        notifRes,
+        programmesRes,
+        statsRes,
+        atRiskRes,
+      ] = results;
+
+      if (coursesRes.status === 'fulfilled') setCourses(coursesRes.value.data);
+      if (studentsRes.status === 'fulfilled') setStudents(studentsRes.value.data || []);
+      if (notifRes.status === 'fulfilled') setNotifications(notifRes.value.data.notifications || []);
+      if (programmesRes.status === 'fulfilled') setProgrammes(programmesRes.value.data);
+      if (statsRes.status === 'fulfilled') setStats(statsRes.value.data);
+      if (atRiskRes.status === 'fulfilled') setAtRiskCount(atRiskRes.value.data.count || 0);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchData();
 
     // Poll for new notifications
@@ -178,7 +211,7 @@ const AdminDashboard = () => {
     }, 15000); // 15 seconds
     
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedDeanDept]);
 
   const handleMarkRead = async (id: number) => {
     await markNotificationReadApi(id);
@@ -236,6 +269,47 @@ const AdminDashboard = () => {
         <main className="flex-1 p-4 lg:p-6 space-y-6 overflow-auto">
           {activeTab === "overview" && (
             <>
+              {role === "dean" && (
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-border/60 rounded-xl p-3.5 shadow-sm">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                      <Building2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                        Dean Control Level:
+                        <span className="text-primary font-bold">
+                          {selectedDeanDept
+                            ? deanDepartments.find((d) => String(d.id) === selectedDeanDept)?.name || "Department View"
+                            : "Whole School / Faculty Level"}
+                        </span>
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Switch between whole school overview or filter down to a specific department
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      Department Filter:
+                    </span>
+                    <select
+                      value={selectedDeanDept}
+                      onChange={(e) => setSelectedDeanDept(e.target.value)}
+                      className="px-3 py-1.5 text-sm rounded-lg border border-input bg-background font-medium focus:ring-2 focus:ring-ring outline-none"
+                    >
+                      <option value="">🏫 All Departments (Whole School Level)</option>
+                      {deanDepartments.map((d) => (
+                        <option key={d.id} value={String(d.id)}>
+                          🏢 {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
               <StatsCards
                 totalStudents={stats.total_students}
                 totalCourses={stats.total_courses}

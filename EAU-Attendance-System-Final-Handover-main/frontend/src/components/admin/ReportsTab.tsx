@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -127,8 +127,9 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     "student" | "course" | "summary"
   >("student");
   const [selectedOffering, setSelectedOffering] = useState<string>("");
-  const [filterOfferingTeacher, setFilterOfferingTeacher] = useState<string>("all");
+  const [filterOfferingTeacher, setFilterOfferingTeacher] = useState<string>("");
   const [selectedStudent, setSelectedStudent] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "at_risk" | "warning" | "safe">("all");
   const [reportType, setReportType] = useState<"full" | "weekly" | "custom">("full");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -145,6 +146,10 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
   const [previewAggregates, setPreviewAggregates] = useState<any>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [loadingOfferings, setLoadingOfferings] = useState(false);
+  const [semesters, setSemesters] = useState<
+    { id: number; label: string; is_current?: boolean }[]
+  >([]);
+  const [selectedSemester, setSelectedSemester] = useState<string>("all");
   const [summarySemesters, setSummarySemesters] = useState<
     { id: number; label: string; is_current?: boolean }[]
   >([]);
@@ -152,9 +157,10 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     semester: "",
     programme: isScoped && scopedProgrammeId ? String(scopedProgrammeId) : "all",
     department: "all",
-    teacher: "all",
+    teacher: "",
     start_date: "",
     end_date: "",
+    status: "all",
   });
   const [programmes, setProgrammes] = useState<{ id: number; name: string }[]>([]);
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
@@ -162,19 +168,24 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryData, setSummaryData] = useState<any>(null);
 
+  const activeOfferingObj = useMemo(() => {
+    return offerings.find((o) => String(o.id) === selectedOffering) || null;
+  }, [offerings, selectedOffering]);
+
   const weekStartISO = formatDateISO(currentWeekMonday);
   const weekEnd = new Date(currentWeekMonday);
   weekEnd.setDate(currentWeekMonday.getDate() + 6);
   const weekEndISO = formatDateISO(weekEnd);
 
-  // Load offerings (backend already scopes these by role)
+  // Load offerings dynamically when selectedSemester changes
   useEffect(() => {
     const loadOfferings = async () => {
       setLoadingOfferings(true);
       try {
-        const semRes = await getSemestersApi({ current: true });
-        const currentSem = semRes.data?.[0];
-        const params = currentSem ? { semester: currentSem.id } : {};
+        const params: any = {};
+        if (selectedSemester !== "all") {
+          params.semester = parseInt(selectedSemester);
+        }
         const res = await getOfferingsApi(params);
         setOfferings(res.data || []);
       } catch (e) {
@@ -184,66 +195,73 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
       }
     };
     loadOfferings();
-  }, []);
+  }, [selectedSemester]);
+
+  useEffect(() => {
+    if (offerings.length > 0) {
+      const validForTeacher = offerings.filter((o) => {
+        if (filterOfferingTeacher === "all") return true;
+        const tId = String(filterOfferingTeacher);
+        if (String(o.teacher) === tId) return true;
+        if (Array.isArray(o.secondary_teacher_ids) && o.secondary_teacher_ids.map(String).includes(tId)) return true;
+        if (Array.isArray(o.secondary_teachers) && o.secondary_teachers.some((st: any) => String(st.id) === tId)) return true;
+        return false;
+      });
+      if (validForTeacher.length > 0) {
+        if (!selectedOffering || !validForTeacher.some((o) => String(o.id) === selectedOffering)) {
+          setSelectedOffering(String(validForTeacher[0].id));
+        }
+      } else {
+        setSelectedOffering("");
+      }
+    }
+  }, [filterOfferingTeacher, offerings]);
 
   useEffect(() => {
     getSemestersApi()
       .then((res) => {
         const list = res.data || [];
+        setSemesters(list);
         setSummarySemesters(list);
         const current = list.find((s: any) => s.is_current) || list[0];
-        if (current)
+        if (current) {
+          setSelectedSemester(String(current.id));
           setSummaryFilters((prev) => ({ ...prev, semester: String(current.id) }));
-      })
-      .catch(() => setSummarySemesters([]));
-
-    // getProgrammesApi is backend-scoped — dean/dept_head only get their programme(s)
-    getProgrammesApi({ active_only: true })
-      .then((res) => {
-        setProgrammes(res.data || []);
-        // If scoped and only one programme returned, lock the filter to it
-        if (isScoped && res.data?.length === 1) {
-          setSummaryFilters((prev) => ({
-            ...prev,
-            programme: String(res.data[0].id),
-          }));
         }
       })
+      .catch(() => setSemesters([]));
+
+    // getProgrammesApi is backend-scoped — dean/dept_head only get their programme(s)
+    getProgrammesApi()
+      .then((res) => setProgrammes(res.data || []))
       .catch(() => setProgrammes([]));
+
+    getDepartmentsApi()
+      .then((res) => setDepartments(res.data || []))
+      .catch(() => setDepartments([]));
 
     // getUsersApi with role=teacher — backend scopes by programme for dean/dept_head
     getUsersApi({ role: "teacher" })
-      .then((res) => setTeachers(res.data || []))
+      .then((res) => {
+        const list = res.data || [];
+        setTeachers(list);
+        if (list.length > 0) {
+          const firstTId = String(list[0].id);
+          setFilterOfferingTeacher((prev) => (prev && prev !== "all" ? prev : firstTId));
+          setSummaryFilters((prev) => ({ ...prev, teacher: prev.teacher && prev.teacher !== "all" ? prev.teacher : firstTId }));
+        }
+      })
       .catch(() => setTeachers([]));
   }, []);
 
   useEffect(() => {
-    if (summaryFilters.programme === "all") {
-      setDepartments([]);
-      return;
+    if (selectedOffering) {
+      getOfferingStudentsApi(parseInt(selectedOffering))
+        .then((res) => setOfferingStudents(res.data?.students || []))
+        .catch(() => setOfferingStudents([]));
+    } else {
+      setOfferingStudents([]);
     }
-    getDepartmentsApi({ programme: parseInt(summaryFilters.programme), active_only: true })
-      .then((res) => setDepartments(res.data || []))
-      .catch(() => setDepartments([]));
-  }, [summaryFilters.programme]);
-
-  useEffect(() => {
-    const loadStudentsForOffering = async () => {
-      if (!selectedOffering) {
-        setOfferingStudents([]);
-        setSelectedStudent("all");
-        setPreviewRows([]);
-        setPreviewAggregates(null);
-        return;
-      }
-      try {
-        const res = await getOfferingStudentsApi(parseInt(selectedOffering));
-        setOfferingStudents(res.data?.students || []);
-      } catch (err) {
-        setOfferingStudents([]);
-      }
-    };
-    loadStudentsForOffering();
   }, [selectedOffering]);
 
   const getEffectiveDates = () => {
@@ -267,7 +285,13 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     }
     setPreviewLoading(true);
     try {
-      const params: any = { type: reportType };
+      const params: any = { type: reportType, status: statusFilter };
+      if (selectedSemester !== "all") {
+        params.semester = parseInt(selectedSemester);
+      }
+      if (filterOfferingTeacher !== "all") {
+        params.teacher = parseInt(filterOfferingTeacher);
+      }
       if (includeStudentFilter && selectedStudent !== "all") {
         params.student = parseInt(selectedStudent);
       }
@@ -294,14 +318,17 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
   }, [
     activeReportTab,
     selectedOffering,
+    selectedSemester,
+    filterOfferingTeacher,
     selectedStudent,
     reportType,
     startDate,
     endDate,
     currentWeekMonday,
+    statusFilter,
   ]);
 
-  const handleOfferingReport = async (format: "pdf" | "csv") => {
+  const handleOfferingReport = async (format: "pdf" | "excel") => {
     if (!selectedOffering) {
       toast.error("Please select a course first");
       return;
@@ -310,11 +337,17 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
       toast.error("Please set start and end dates");
       return;
     }
-    const key = `${format}-${reportType}`;
+    const key = `${format}-${reportType}-${statusFilter}-${selectedSemester}-${filterOfferingTeacher}`;
     setDownloading(key);
     try {
       const dates = getEffectiveDates();
-      const extraParams: any = { ...dates };
+      const extraParams: any = { ...dates, status: statusFilter };
+      if (selectedSemester !== "all") {
+        extraParams.semester = parseInt(selectedSemester);
+      }
+      if (filterOfferingTeacher !== "all") {
+        extraParams.teacher = parseInt(filterOfferingTeacher);
+      }
       if (activeReportTab === "student" && selectedStudent !== "all") {
         extraParams.student = parseInt(selectedStudent);
       }
@@ -335,12 +368,45 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     );
   });
 
-  const chartRiskData = previewAggregates?.risk_distribution
-    ? Object.entries(previewAggregates.risk_distribution).map(([name, value]) => ({ name, value }))
-    : [];
-  const chartBandData = previewAggregates?.attendance_bands
-    ? Object.entries(previewAggregates.attendance_bands).map(([band, count]) => ({ band, count }))
-    : [];
+  const displayRows = useMemo(() => {
+    if (!previewRows) return [];
+    if (statusFilter === "at_risk") {
+      return previewRows.filter((r) => r.status === "At Risk");
+    }
+    if (statusFilter === "warning") {
+      return previewRows.filter((r) => r.status === "Warning");
+    }
+    if (statusFilter === "safe") {
+      return previewRows.filter((r) => r.status === "Safe");
+    }
+    return previewRows;
+  }, [previewRows, statusFilter]);
+
+  const chartRiskData = useMemo(() => {
+    if (!displayRows || displayRows.length === 0) return [];
+    const safeCount = displayRows.filter((r) => r.status === "Safe").length;
+    const warningCount = displayRows.filter((r) => r.status === "Warning").length;
+    const atRiskCount = displayRows.filter((r) => r.status === "At Risk").length;
+    const list = [
+      { name: "Safe", value: safeCount },
+      { name: "Warning", value: warningCount },
+      { name: "At Risk", value: atRiskCount },
+    ];
+    return statusFilter === "all" ? list : list.filter((r) => r.value > 0);
+  }, [displayRows, statusFilter]);
+
+  const chartBandData = useMemo(() => {
+    if (!displayRows || displayRows.length === 0) return [];
+    const bands = { "<75%": 0, "75–84.9%": 0, "85–89.9%": 0, "≥90%": 0 };
+    displayRows.forEach((r) => {
+      const p = r.percentage;
+      if (p < 75) bands["<75%"]++;
+      else if (p < 85) bands["75–84.9%"]++;
+      else if (p < 90) bands["85–89.9%"]++;
+      else bands["≥90%"]++;
+    });
+    return Object.entries(bands).map(([band, count]) => ({ band, count }));
+  }, [displayRows]);
 
   const fetchSummaryPreview = async () => {
     if (!summaryFilters.semester) {
@@ -376,14 +442,39 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     { id: "summary", label: "Summary", icon: BarChart2 },
   ];
 
-  const renderOfferingFilterPanel = (showStudentFilter: boolean) => (
+const renderOfferingFilterPanel = (showStudentFilter: boolean) => (
     <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-4">
       <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
         <Filter className="w-3.5 h-3.5" />
         Filters
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Semester
+          </label>
+          <Select
+            value={selectedSemester}
+            onValueChange={(v) => {
+              setSelectedSemester(v);
+              setSelectedOffering("");
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select semester…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Semesters</SelectItem>
+              {semesters.map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.label}{s.is_current ? " (Current)" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Teacher
@@ -392,19 +483,35 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
             value={filterOfferingTeacher}
             onValueChange={(v) => {
               setFilterOfferingTeacher(v);
-              setSelectedOffering("");
             }}
           >
             <SelectTrigger>
-              <SelectValue placeholder="All teachers" />
+              <SelectValue placeholder="Select teacher…" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Teachers</SelectItem>
-              {teachers.map((t) => (
-                <SelectItem key={t.id} value={String(t.id)}>
-                  {t.full_name}
-                </SelectItem>
-              ))}
+              {teachers.map((t) => {
+                let roleTag = "";
+                if (activeOfferingObj) {
+                  if (String(activeOfferingObj.teacher) === String(t.id)) {
+                    roleTag = " (Primary Teacher)";
+                  } else if (
+                    Array.isArray(activeOfferingObj.secondary_teacher_ids) &&
+                    activeOfferingObj.secondary_teacher_ids.map(String).includes(String(t.id))
+                  ) {
+                    roleTag = " (Co-Teacher)";
+                  } else if (
+                    Array.isArray(activeOfferingObj.secondary_teachers) &&
+                    activeOfferingObj.secondary_teachers.some((st: any) => String(st.id) === String(t.id))
+                  ) {
+                    roleTag = " (Co-Teacher)";
+                  }
+                }
+                return (
+                  <SelectItem key={t.id} value={String(t.id)}>
+                    {t.full_name}{roleTag}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
@@ -419,17 +526,40 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
             </SelectTrigger>
             <SelectContent>
               {offerings
-                .filter(
-                  (o) =>
-                    filterOfferingTeacher === "all" ||
-                    String(o.teacher) === filterOfferingTeacher,
-                )
+                .filter((o) => {
+                  if (filterOfferingTeacher === "all") return true;
+                  const tId = String(filterOfferingTeacher);
+                  if (String(o.teacher) === tId) return true;
+                  if (Array.isArray(o.secondary_teacher_ids) && o.secondary_teacher_ids.map(String).includes(tId)) return true;
+                  if (Array.isArray(o.secondary_teachers) && o.secondary_teachers.some((st: any) => String(st.id) === tId)) return true;
+                  return false;
+                })
                 .map((o) => (
                   <SelectItem key={o.id} value={String(o.id)}>
                     {o.course_name} — Sec {o.section_name} Y{o.section_year}
-                    {o.teacher_name ? ` (${o.teacher_name})` : ""}
+                    {o.all_teachers_display ? ` (${o.all_teachers_display})` : o.teacher_name ? ` (${o.teacher_name})` : ""}
                   </SelectItem>
                 ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Student Status
+          </label>
+          <Select
+            value={statusFilter}
+            onValueChange={(v) => setStatusFilter(v as any)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses (All Students)</SelectItem>
+              <SelectItem value="at_risk">Critical / At-Risk Only (&lt;75%)</SelectItem>
+              <SelectItem value="warning">Warning Only (75%–84.9%)</SelectItem>
+              <SelectItem value="safe">Safe Only (≥85%)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -451,14 +581,6 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
               <SelectItem value="custom">Custom range…</SelectItem>
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">
-            {reportType === "full" &&
-              "Includes every attendance record for this course."}
-            {reportType === "weekly" &&
-              "Shows only the current week (Mon–Sun)."}
-            {reportType === "custom" &&
-              "Pick a start and end date below."}
-          </p>
         </div>
       </div>
 
@@ -594,16 +716,16 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
           disabled={!selectedOffering || !!downloading}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border hover:bg-muted text-sm font-medium disabled:opacity-50 transition-colors"
         >
-          <Download className="w-3.5 h-3.5" />
-          PDF
+          <FileText className="w-4 h-4 text-red-600" />
+          Download PDF
         </button>
         <button
-          onClick={() => handleOfferingReport("csv")}
+          onClick={() => handleOfferingReport("excel")}
           disabled={!selectedOffering || !!downloading}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border hover:bg-muted text-sm font-medium disabled:opacity-50 transition-colors"
         >
-          <Download className="w-3.5 h-3.5" />
-          Excel
+          <Download className="w-4 h-4 text-emerald-600" />
+          Download Excel (.xlsx)
         </button>
         {downloading && (
           <span className="text-xs text-muted-foreground ml-1">Generating…</span>
@@ -631,7 +753,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
 
   const RISK_COLORS = ["#16a34a", "#f59e0b", "#dc2626"];
   const renderCharts = () =>
-    previewRows.length > 0 ? (
+    displayRows.length > 0 ? (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="rounded-xl border border-border bg-background p-4">
           <p className="text-sm font-semibold mb-3">Risk Distribution</p>
@@ -680,7 +802,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     ) : null;
 
   const renderStudentTable = (showPerStudentDownload: boolean) =>
-    previewRows.length > 0 ? (
+    displayRows.length > 0 ? (
       <div className="rounded-xl border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -699,7 +821,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {previewRows.map((row) => (
+              {displayRows.map((row) => (
                 <tr key={row.student_pk} className="hover:bg-muted/30 transition-colors">
                   <td className="p-3">
                     <p className="font-medium">{row.full_name}</p>
@@ -761,13 +883,14 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
                   {showPerStudentDownload && (
                     <td className="p-3">
                       <div className="flex justify-end gap-1.5">
-                        {(["pdf", "csv"] as const).map((fmt) => (
+                        {(["pdf", "excel"] as const).map((fmt) => (
                           <button
                             key={fmt}
                             onClick={() => {
                               const dates = getEffectiveDates();
                               downloadReportApi("student", row.student_pk, fmt, reportType === "custom" ? "full" : reportType, {
                                 offering: parseInt(selectedOffering),
+                                status: statusFilter,
                                 ...dates,
                               });
                             }}
@@ -831,7 +954,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
               <>
                 {renderKPIs()}
                 {renderCharts()}
-                {previewRows.length > 0
+                {displayRows.length > 0
                   ? renderStudentTable(true)
                   : !previewLoading && (
                       <EmptyState message="No attendance data for the selected filters." />
@@ -853,7 +976,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
               <>
                 {renderKPIs()}
                 {renderCharts()}
-                {previewRows.length > 0
+                {displayRows.length > 0
                   ? renderStudentTable(false)
                   : !previewLoading && (
                       <EmptyState message="No attendance data for the selected filters." />
@@ -929,9 +1052,8 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
                     value={summaryFilters.teacher}
                     onValueChange={(v) => setSummaryFilters((p) => ({ ...p, teacher: v }))}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Select teacher" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All teachers</SelectItem>
                       {teachers.map((t) => (
                         <SelectItem key={t.id} value={String(t.id)}>{t.full_name || `Teacher ${t.id}`}</SelectItem>
                       ))}
@@ -977,6 +1099,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
                       if (summaryFilters.teacher !== "all") p.teacher = parseInt(summaryFilters.teacher);
                       if (summaryFilters.start_date) p.start_date = summaryFilters.start_date;
                       if (summaryFilters.end_date) p.end_date = summaryFilters.end_date;
+                      if (summaryFilters.status !== "all") p.status = summaryFilters.status;
                       await downloadSummaryReportApi("pdf", p);
                       toast.success("Summary PDF downloaded");
                     } catch (err: any) {
@@ -985,7 +1108,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
                   }}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border hover:bg-muted text-sm font-medium transition-colors"
                 >
-                  <Download className="w-3.5 h-3.5" />
+                  <FileText className="w-4 h-4 text-red-600" />
                   Executive PDF
                 </button>
                 <button
@@ -998,16 +1121,17 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
                       if (summaryFilters.teacher !== "all") p.teacher = parseInt(summaryFilters.teacher);
                       if (summaryFilters.start_date) p.start_date = summaryFilters.start_date;
                       if (summaryFilters.end_date) p.end_date = summaryFilters.end_date;
-                      await downloadSummaryReportApi("csv", p);
-                      toast.success("Summary CSV downloaded");
+                      if (summaryFilters.status !== "all") p.status = summaryFilters.status;
+                      await downloadSummaryReportApi("excel", p);
+                      toast.success("Summary Excel downloaded");
                     } catch (err: any) {
-                      toast.error(err?.message || "Failed to download summary CSV");
+                      toast.error(err?.message || "Failed to download summary Excel");
                     }
                   }}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border hover:bg-muted text-sm font-medium transition-colors"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  Excel
+                  <Download className="w-4 h-4 text-emerald-600" />
+                  Excel (.xlsx)
                 </button>
               </div>
             </div>
@@ -1071,19 +1195,20 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
                         data={(() => {
-                          // Aggregate bands from offering_analytics
-                          const bandsMap: Record<string, number> = {};
-                          (summaryData.offering_analytics || []).forEach((row: any) => {
-                            Object.entries(row.attendance_bands || {}).forEach(([k, v]) => {
-                              bandsMap[k] = (bandsMap[k] || 0) + (v as number);
+                          const bands = { "<75%": 0, "75–84.9%": 0, "85–89.9%": 0, "≥90%": 0 };
+                          if (summaryData?.offering_analytics) {
+                            summaryData.offering_analytics.forEach((row: any) => {
+                              if (row.attendance_bands) {
+                                Object.entries(row.attendance_bands).forEach(([k, v]) => {
+                                  if (k.includes("<75")) bands["<75%"] += (v as number);
+                                  else if (k.includes("75")) bands["75–84.9%"] += (v as number);
+                                  else if (k.includes("85")) bands["85–89.9%"] += (v as number);
+                                  else if (k.includes("90")) bands["≥90%"] += (v as number);
+                                });
+                              }
                             });
-                          });
-                          return [
-                            { band: "<75%", count: bandsMap["<75%"] || 0 },
-                            { band: "75–84.9%", count: bandsMap["75-84.9%"] || 0 },
-                            { band: "85–89.9%", count: bandsMap["85-89.9%"] || 0 },
-                            { band: "≥90%", count: bandsMap[">=90%"] || 0 },
-                          ];
+                          }
+                          return Object.entries(bands).map(([band, count]) => ({ band, count }));
                         })()}
                         barCategoryGap="30%"
                       >

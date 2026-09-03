@@ -5,6 +5,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -821,6 +822,7 @@ const UserRolesTab = () => {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display">Edit User</DialogTitle>
+            <DialogDescription className="sr-only">Edit user details</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="grid grid-cols-2 gap-3">
@@ -995,6 +997,7 @@ const UserRolesTab = () => {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display">Add New User</DialogTitle>
+            <DialogDescription className="sr-only">Add new user account details</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="grid grid-cols-2 gap-3">

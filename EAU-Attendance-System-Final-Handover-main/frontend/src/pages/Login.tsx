@@ -11,37 +11,43 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, UserCheck, KeyRound } from "lucide-react";
 import eauLogo from "@/assets/eau-logo.png";
 
 const Login = () => {
   const { login } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [identifier, setIdentifier] = useState("");
+  const [selectedRole, setSelectedRole] = useState("admin");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!password) {
+      toast.error("Please enter your password");
+      return;
+    }
     setLoading(true);
     try {
-      await login(identifier, password);
-      const role = localStorage.getItem("user_role");
-      toast.success("Logged in successfully");
-      if (role === "admin" || role === "dean" || role === "dept_head") {
+      const loggedUser = await login("", password, selectedRole);
+      const userRole = loggedUser?.role || localStorage.getItem("user_role");
+      toast.success(`Welcome ${loggedUser?.first_name || ""}! Logged in successfully`);
+
+      if (userRole === "admin" || userRole === "dean" || userRole === "dept_head") {
         window.location.href = "/admin";
-      } else if (role === "teacher") {
+      } else if (userRole === "teacher") {
         window.location.href = "/teacher";
-      } else if (role === "student") {
+      } else if (userRole === "student") {
         window.location.href = "/student";
-      } else if (role === "parent") {
+      } else if (userRole === "parent") {
         window.location.href = "/parent";
       } else {
         window.location.href = "/teacher";
       }
     } catch (err: any) {
       toast.error(
-        "Invalid credentials. Please check your Staff ID / Email and password.",
+        err?.response?.data?.error ||
+          "Invalid credentials. Please check your password.",
       );
     } finally {
       setLoading(false);
@@ -66,19 +72,36 @@ const Login = () => {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4 mt-2">
+            {/* Role Selection */}
             <div className="space-y-2">
-              <Label htmlFor="identifier">Staff ID or Email</Label>
-              <Input
-                id="identifier"
-                type="text"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="e.g. TCH001 or your email"
-                required
-              />
+              <Label
+                htmlFor="role-select"
+                className="font-medium text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-primary" /> Select Role / Portal
+              </Label>
+              <select
+                id="role-select"
+                value={selectedRole}
+                onChange={(e) => setSelectedRole(e.target.value)}
+                className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background font-medium focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="admin">🔑 System Administrator</option>
+                <option value="dean">🏛️ Dean (School Head)</option>
+                <option value="dept_head">🏢 Department Head</option>
+                <option value="teacher">👨‍🏫 Teacher / Instructor</option>
+                <option value="student">🎓 Student</option>
+              </select>
             </div>
+
+            {/* Password Input */}
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label
+                htmlFor="password"
+                className="font-medium text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-primary" /> Password
+              </Label>
               <div className="relative">
                 <Input
                   id="password"
@@ -103,12 +126,13 @@ const Login = () => {
                 </button>
               </div>
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+
+            <Button type="submit" className="w-full font-medium" disabled={loading}>
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>
           <p className="text-center text-muted-foreground text-xs mt-6">
-            Contact your administrator if you need access
+            Contact your administrator if you need assistance
           </p>
         </CardContent>
       </Card>

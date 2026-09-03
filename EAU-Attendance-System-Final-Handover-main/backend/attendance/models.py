@@ -18,7 +18,7 @@ class User(AbstractUser):
         ('student',   'Student'),
     )
     staff_id = models.CharField(max_length=30, unique=True, blank=True, null=True)
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='teacher')
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='student')
 
     # Dean manages a whole Programme (= School/Faculty in EAU terms)
     managed_programme = models.ForeignKey(
@@ -173,14 +173,16 @@ class Student(models.Model):
     last_name = models.CharField(max_length=50)
     student_id = models.CharField(max_length=20, unique=True)
     email = models.EmailField(unique=True)
-    parent_email = models.EmailField()
-    parent_telegram = models.CharField(max_length=100, help_text="Telegram username")
+    phone = models.CharField(max_length=30, blank=True, null=True, default='')
+    parent_email = models.EmailField(blank=True, default='')
+    parent_telegram = models.CharField(max_length=100, blank=True, default='', help_text="Telegram username")
+    parent_phone = models.CharField(max_length=30, blank=True, null=True, default='')
     parent_telegram_chat_id = models.CharField(max_length=100, blank=True, null=True, help_text="Automatically filled when parent starts the bot")
     programme = models.ForeignKey(
-        Programme, on_delete=models.CASCADE, related_name='students'
+        Programme, on_delete=models.CASCADE, related_name='students', null=True, blank=True
     )
     department = models.ForeignKey(
-        Department, on_delete=models.CASCADE, related_name='students'
+        Department, on_delete=models.CASCADE, related_name='students', null=True, blank=True
     )
     is_active = models.BooleanField(default=True)
 

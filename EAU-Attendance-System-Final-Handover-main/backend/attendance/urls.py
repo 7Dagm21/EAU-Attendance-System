@@ -6,9 +6,10 @@ from .telegram_webhook import telegram_webhook
 
 urlpatterns = [
     # ── Auth ──────────────────────────────────────────
-    path('auth/login/',   views.LoginView.as_view()),
-    path('auth/me/',      views.MeView.as_view()),
-    path('auth/refresh/', TokenRefreshView.as_view()),
+    path('auth/login/',         views.LoginView.as_view()),
+    path('auth/users-by-role/', views.PublicUserListView.as_view()),
+    path('auth/me/',            views.MeView.as_view()),
+    path('auth/refresh/',       TokenRefreshView.as_view()),
 
     # ── Programmes (Schools/Faculties) ────────────────
     path('programmes/',                      views.ProgrammeListView.as_view()),

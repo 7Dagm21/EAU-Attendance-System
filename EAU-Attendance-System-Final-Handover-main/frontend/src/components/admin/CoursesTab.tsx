@@ -609,7 +609,7 @@ const CoursesTab = ({
                   Year / Sem
                 </th>
                 <th className="text-left px-6 py-3 font-medium text-muted-foreground">
-                  Credit Hours
+                  Total Contact Hours
                 </th>
                 {isAdmin && (
                   <th className="text-right px-6 py-3 font-medium text-muted-foreground">
@@ -727,7 +727,7 @@ const CoursesTab = ({
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Credit Hours
+                  Total Contact Hours
                 </p>
                 <input
                   type="number"
@@ -874,7 +874,7 @@ const CoursesTab = ({
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Credit Hours *
+                  Total Contact Hours *
                 </p>
                 <input
                   type="number"

@@ -5,6 +5,9 @@ from decouple import config
 
 
 def send_email(to_email, subject, body):
+    if not to_email or '@' not in to_email:
+        print(f"Skipping send_email: Invalid or empty recipient address '{to_email}'")
+        return False
     try:
         send_mail(
             subject=subject,
@@ -14,10 +17,11 @@ def send_email(to_email, subject, body):
             html_message=body,
             fail_silently=False,
         )
+        print(f"Successfully dispatched email to: {to_email}")
         return True
     except Exception as e:
-        print(f"Email error: {e}")
-        return None
+        print(f"Email delivery failed for {to_email}: {e}")
+        return False
 
 
 def calculate_attendance_status(student, offering, cutoff_date=None):
@@ -90,14 +94,14 @@ def send_attendance_status_warning(student, course, summary, status_label):
         action_text = (
             f"Based on the attendance recorded so far, the best possible final attendance is "
             f"{summary['projected_final_percentage']}%, which is below the 85% requirement. "
-            f"This means you cannot sit for the final examination."
+            f"This means you are not eligible for the final examination."
         )
     else:
         subject = f"Attendance Warning — {course.name}"
         title = "Attendance Threshold Warning"
         action_text = (
             f"Your current attendance is {summary['current_percentage']}% based on the "
-            f"classes held so far. Please improve attendance immediately to remain eligible."
+            f"classes held so far. Please improve attendance immediately to remain eligible for the final exam."
         )
 
     body = f"""
@@ -154,9 +158,20 @@ def send_attendance_status_warning(student, course, summary, status_label):
     except Exception as e:
         print(f"Error creating in-app notification: {e}")
 
+    parent_action_text = action_text.replace(
+        "Your current attendance is",
+        f"{student.full_name}'s current attendance is"
+    ).replace(
+        "Please improve attendance",
+        "Please ensure the student improves attendance"
+    )
+
     parent_body = body.replace(
         f"Dear {student.full_name}",
         f"Dear Parent/Guardian of {student.full_name}"
+    ).replace(
+        action_text,
+        parent_action_text
     )
     send_email(student.parent_email, subject, parent_body)
 
@@ -189,7 +204,7 @@ def send_attendance_status_warning(student, course, summary, status_label):
             f"Course: {course.name}\n"
             f"Current Attendance: {summary['current_percentage']}%\n"
             f"Best Possible Final Attendance: {summary['projected_final_percentage']}%\n\n"
-            f"{action_text}"
+            f"{parent_action_text}"
         )
 
         payload = {
@@ -239,12 +254,12 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
         if status_label == 'cannot_sit_final' or proj_pct < 85.0:
             status_advice = (
                 f"🚨 CRITICAL: Best possible final attendance is {proj_pct}%, which is below the 85.0% threshold. "
-                f"The student is at immediate risk of being debarred from final examinations."
+                f"The student is not eligible for final exam."
             )
         elif status_label == 'at_risk' or current_pct < 85.0:
             status_advice = (
                 f"⚠️ WARNING: Current attendance is {current_pct}%, below the required 85.0% minimum threshold. "
-                f"Please ensure regular attendance in upcoming sessions to restore examination eligibility."
+                f"Please ensure regular attendance in upcoming sessions to remain eligible for the final exam."
             )
         else:
             status_advice = (
@@ -315,7 +330,7 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
             </div>
 
             <p style="color: #64748b; font-size: 11px; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 12px;">
-                This is an automated message from the Emirates Aviation University Attendance Management System. If you have an authorized excuse, please provide official documentation to your department.
+                This is an automated message from the Ethiopian Aviation University Attendance Management System. If you have an authorized excuse, please provide official documentation to your department.
             </p>
         </div>
     </div>
@@ -327,7 +342,13 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
 
     # 2. Send to parent email
     if student.parent_email:
-        parent_body = body.replace(f"Dear {student_display_name},", f"Dear Parent/Guardian of {student_display_name},")
+        parent_body = body.replace(
+            f"Dear {student_display_name},",
+            f"Dear Parent/Guardian of {student_display_name},"
+        ).replace(
+            "that you were marked",
+            f"that your student {student_display_name} was marked"
+        )
         send_email(student.parent_email, subject, parent_body)
 
     # 3. Create in-app notifications
@@ -351,7 +372,7 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
     except Exception as e:
         print(f"Error creating in-app notification: {e}")
 
-    # 4. Send EXACTLY ONE Telegram message to parent
+    # 4. Send Telegram message to parent
     if student.parent_telegram_chat_id:
         import requests
         from decouple import config
@@ -360,19 +381,18 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
 
         telegram_message = (
             f"Dear Parent/Guardian,\n\n"
-            f"This is an automated attendance alert from *EAU Attendance System*.\n\n"
-            f"• *Student:* {student.full_name} ({student.student_id})\n"
-            f"• *Course:* {course_name}\n"
-            f"• *Date:* {date}{session_str}\n"
-            f"• *Status:* ❌ ABSENT\n\n"
+            f"This is an automated attendance alert from EAU Attendance System.\n\n"
+            f"• Student: {student.full_name} ({student.student_id})\n"
+            f"• Course: {course_name}\n"
+            f"• Date: {date}{session_str}\n"
+            f"• Status: ❌ ABSENT\n\n"
             f"{telegram_metric_text}"
-            f"📢 *Notice:*\n{status_advice}"
+            f"📢 Notice:\n{status_advice}"
         )
 
         payload = {
             'chat_id': student.parent_telegram_chat_id,
-            'text': f"⚠️ *Absence Alert — {student.full_name} — {course_name}*\n\n{telegram_message}",
-            'parse_mode': 'Markdown'
+            'text': f"⚠️ Absence Alert — {student.full_name} — {course_name}\n\n{telegram_message}"
         }
         try:
             requests.post(url, data=payload, verify=False, timeout=10)

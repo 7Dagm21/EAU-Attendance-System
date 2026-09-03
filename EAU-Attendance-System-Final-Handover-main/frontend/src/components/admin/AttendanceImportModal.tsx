@@ -114,6 +114,8 @@ const AttendanceImportModal = ({
     onClose();
   };
 
+  const [selectedContactHours, setSelectedContactHours] = useState<string>("1.5");
+
   // ── Build download params ─────────────────────────────────────────────────
   const getDownloadParams = () => {
     const baseParams: any =
@@ -129,6 +131,10 @@ const AttendanceImportModal = ({
           };
     if (selectedTeacherId) {
       baseParams.teacher_id = parseInt(selectedTeacherId);
+    }
+    if (selectedContactHours) {
+      const parsed = parseFloat(selectedContactHours);
+      baseParams.session_hours = !isNaN(parsed) && parsed > 0 ? parsed : 1.5;
     }
     return baseParams;
   };
@@ -348,6 +354,77 @@ const AttendanceImportModal = ({
                   </select>
                 </div>
               )}
+
+              {/* Total Contact Hours selector (Dropdown + Direct Custom Input) */}
+              <div className="space-y-2 p-3.5 rounded-xl bg-muted/40 border border-border">
+                <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">
+                  SELECT OR TYPE TOTAL CONTACT HOURS FOR THIS PERIOD / WEEK *
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Select total contact hours from the dropdown or write your custom value directly:
+                </p>
+                <div className="flex gap-2 items-center">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      value={selectedContactHours}
+                      onChange={(e) => setSelectedContactHours(e.target.value)}
+                      placeholder="Type hours (e.g. 1.5, 2.5)"
+                      className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background font-medium outline-none focus:ring-2 focus:ring-ring pr-14"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium pointer-events-none">
+                      Hours
+                    </span>
+                  </div>
+                  <select
+                    value={
+                      ["1.0", "1.5", "2.0", "2.5", "3.0", "4.0", "5.0", "6.0", "8.0", "10.0", "12.0", "15.0"].includes(selectedContactHours)
+                        ? selectedContactHours
+                        : ""
+                    }
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setSelectedContactHours(e.target.value);
+                      }
+                    }}
+                    className="w-44 border border-input rounded-lg px-3 py-2 text-sm bg-background font-medium outline-none focus:ring-2 focus:ring-ring text-foreground"
+                  >
+                    <option value="">Choose preset...</option>
+                    <option value="1.0">1.0 Hour</option>
+                    <option value="1.5">1.5 Hours</option>
+                    <option value="2.0">2.0 Hours</option>
+                    <option value="2.5">2.5 Hours</option>
+                    <option value="3.0">3.0 Hours</option>
+                    <option value="4.0">4.0 Hours</option>
+                    <option value="5.0">5.0 Hours</option>
+                    <option value="6.0">6.0 Hours</option>
+                    <option value="8.0">8.0 Hours</option>
+                    <option value="10.0">10.0 Hours</option>
+                    <option value="12.0">12.0 Hours</option>
+                    <option value="15.0">15.0 Hours</option>
+                  </select>
+                </div>
+                {/* Quick Selection Pills */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[11px] text-muted-foreground font-medium mr-0.5">Quick select:</span>
+                  {["1.0", "1.5", "2.0", "3.0", "4.0", "6.0", "8.0"].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setSelectedContactHours(h)}
+                      className={`px-2 py-0.5 rounded text-xs transition-all font-medium ${
+                        selectedContactHours === h
+                          ? "bg-primary text-primary-foreground font-semibold"
+                          : "bg-background border border-input hover:bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {h} hrs
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Date range selection */}
               <div className="space-y-3">

@@ -42,17 +42,18 @@ class Command(BaseCommand):
                                 self.send_message(token, chat_id, "Welcome! Please set a Telegram username in your Telegram profile settings so we can link your account.")
                                 continue
 
+                            clean_u = username.lstrip('@').strip()
                             students = Student.objects.filter(
-                                Q(parent_telegram__iexact=username) |
-                                Q(parent_telegram__iexact=f"@{username}")
+                                Q(parent_telegram__iexact=clean_u) |
+                                Q(parent_telegram__iexact=f"@{clean_u}")
                             )
 
                             if students.exists():
                                 students.update(parent_telegram_chat_id=str(chat_id))
-                                self.send_message(token, chat_id, f"Welcome @{username}! Your account has been successfully linked. You will now receive attendance alerts here.")
-                                self.stdout.write(self.style.SUCCESS(f"Linked @{username} to Chat ID: {chat_id}"))
+                                self.send_message(token, chat_id, f"Welcome @{clean_u}! Your account has been successfully linked. You will now receive attendance alerts here.")
+                                self.stdout.write(self.style.SUCCESS(f"Linked @{clean_u} to Chat ID: {chat_id}"))
                             else:
-                                self.send_message(token, chat_id, f"Welcome! We couldn't find a student registered under username @{username}. Please inform the school administration.")
+                                self.send_message(token, chat_id, f"Welcome! We couldn't find a student registered under username @{clean_u}. Please inform the school administration.")
 
             except Exception as e:
                 time.sleep(2)

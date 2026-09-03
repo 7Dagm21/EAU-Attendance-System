@@ -22,7 +22,7 @@ interface AuthContextType {
   user: User | null;
   role: string | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, role?: string) => Promise<any>;
   logout: () => void;
   signOut: () => void;
   isAuthenticated: boolean;
@@ -66,15 +66,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
-  const login = async (username: string, password: string) => {
-    const res = await loginApi(username, password);
+  const login = async (username: string, password: string, role?: string) => {
+    const res = await loginApi(username, password, role);
     // Write to sessionStorage (tab-scoped) + localStorage (for axios interceptor compat)
     sessionStorage.setItem("access_token", res.data.access);
     sessionStorage.setItem("refresh_token", res.data.refresh);
     localStorage.setItem("access_token", res.data.access);
     localStorage.setItem("refresh_token", res.data.refresh);
-    // NOTE: we do NOT write user_role to storage — role lives in React state only
     setUser(res.data.user);
+    return res.data.user;
   };
 
   const logout = () => {

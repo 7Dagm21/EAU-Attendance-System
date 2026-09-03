@@ -54,8 +54,10 @@ interface Student {
   last_name: string;
   student_id: string;
   email: string;
+  phone?: string;
   parent_email: string;
   parent_telegram: string;
+  parent_phone?: string;
   programme: number | null;
   programme_name: string;
   department: number | null;
@@ -129,8 +131,10 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     last_name: "",
     student_id: "",
     email: "",
+    phone: "",
     parent_email: "",
     parent_telegram: "",
+    parent_phone: "",
     programme_id: "",
     department_id: "",
     semester_id: "",
@@ -148,8 +152,10 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     last_name: "",
     student_id: "",
     email: "",
+    phone: "",
     parent_email: "",
     parent_telegram: "",
+    parent_phone: "",
     programme_id: scopeParams.programme ? String(scopeParams.programme) : "",
     department_id: "",
     section_id: "",
@@ -162,9 +168,13 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
   // FIX 3: toggle to also create a login account
   const [createLoginAccount, setCreateLoginAccount] = useState(true);
 
-  // Bulk import
   const [importOpen, setImportOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importSemester, setImportSemester] = useState("");
+  const [importProgramme, setImportProgramme] = useState("");
+  const [importSection, setImportSection] = useState("");
+  const [importYear, setImportYear] = useState("");
 
   // Load semesters on mount
   useEffect(() => {
@@ -172,14 +182,11 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     fetchStudents();
   }, []);
 
-  // FIX 1: don't pass active_only by default — caused the empty list bug
   const fetchStudents = async () => {
     try {
       setLoading(true);
       const params: Record<string, any> = {};
-      // Apply scope restriction for dean/dept_head
       if (scopeParams.programme) params.programme = scopeParams.programme;
-      // Allow local filter to override/narrow scope
       if (filterProgramme) params.programme = filterProgramme;
       if (filterDepartment) params.department = filterDepartment;
       if (filterSemester) params.semester = filterSemester;
@@ -206,7 +213,6 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     fetchStudents();
   }, [filterProgramme, filterDepartment, filterSemester, filterSection, filterYear]);
 
-  // Load departments for the department filter (scoped to selected programme, or all)
   useEffect(() => {
     const params: Record<string, any> = { active_only: true };
     if (filterProgramme) params.programme = filterProgramme;
@@ -214,7 +220,6 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     getDepartmentsApi(params).then((res) => setFilterDepartments(res.data || []));
   }, [filterProgramme]);
 
-  // When semester + programme changes, load sections
   useEffect(() => {
     if (!filterSemester) {
       setSections([]);
@@ -227,7 +232,6 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     setFilterSection("");
   }, [filterSemester, filterProgramme]);
 
-  // Add modal — load sections when semester + year selected
   useEffect(() => {
     if (!addSemester || !addYear || !addForm.programme_id) {
       setAddSections([]);
@@ -240,7 +244,6 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     }).then((res) => setAddSections(res.data || []));
   }, [addSemester, addYear, addForm.programme_id]);
 
-  // Add modal — load departments when programme selected
   useEffect(() => {
     if (!addForm.programme_id) {
       setAddDepartments([]);
@@ -260,8 +263,10 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
       last_name: student.last_name,
       student_id: student.student_id,
       email: student.email,
+      phone: student.phone || "",
       parent_email: student.parent_email || "",
       parent_telegram: student.parent_telegram || "",
+      parent_phone: student.parent_phone || "",
       programme_id: progId,
       department_id: student.department ? String(student.department) : "",
       semester_id: "",
@@ -281,7 +286,6 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     setEditOpen(true);
   };
 
-  // Edit modal — load sections when programme + year selected
   useEffect(() => {
     if (!editForm.programme_id || !editForm.year) {
       setEditSections([]);
@@ -304,8 +308,10 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
         last_name: editForm.last_name,
         student_id: editForm.student_id,
         email: editForm.email,
+        phone: editForm.phone,
         parent_email: editForm.parent_email,
         parent_telegram: editForm.parent_telegram,
+        parent_phone: editForm.parent_phone,
         programme_id: editForm.programme_id ? parseInt(editForm.programme_id) : null,
         department_id: editForm.department_id ? parseInt(editForm.department_id) : null,
       };
@@ -357,14 +363,15 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     }
     setAdding(true);
     try {
-      // FIX 2: pass args inline — no intermediate payload variable
       const res = await createStudentApi({
         first_name: addForm.first_name,
         last_name: addForm.last_name,
         student_id: addForm.student_id,
         email: addForm.email,
+        phone: addForm.phone || undefined,
         parent_email: addForm.parent_email || undefined,
         parent_telegram: addForm.parent_telegram || undefined,
+        parent_phone: addForm.parent_phone || undefined,
         programme_id: addForm.programme_id
           ? parseInt(addForm.programme_id)
           : undefined,
@@ -377,7 +384,6 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
       });
       setStudents((prev) => [...prev, res.data]);
 
-      // FIX 3: optionally create a login account so student appears in UserRoles
       if (createLoginAccount) {
         try {
           await createUserApi({
@@ -389,7 +395,6 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
             role: "student",
             password: makePassword(addForm.student_id),
           });
-          // Auto-download credentials CSV
           downloadCredentialsCsv(
             addForm.first_name,
             addForm.last_name,
@@ -416,8 +421,10 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
         last_name: "",
         student_id: "",
         email: "",
+        phone: "",
         parent_email: "",
         parent_telegram: "",
+        parent_phone: "",
         programme_id: scopeParams.programme ? String(scopeParams.programme) : "",
         department_id: "",
         section_id: "",
@@ -432,15 +439,27 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     }
   };
 
-  const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleBulkImport = async () => {
+    if (!importFile) {
+      toast.error("Please select an Excel (.xlsx) or CSV file to import");
+      return;
+    }
     setImporting(true);
     try {
-      const res = await bulkImportStudentsApi(file);
-      toast.success(res.data.message);
+      const params: any = {};
+      if (importSemester) params.semester_id = parseInt(importSemester);
+      if (importProgramme) params.programme_id = parseInt(importProgramme);
+      if (importSection) params.section_id = parseInt(importSection);
+      if (importYear) params.year = parseInt(importYear);
+
+      const res = await bulkImportStudentsApi(importFile, params);
+      toast.success(res.data.message || "Students imported successfully!");
+      if (res.data.errors && res.data.errors.length > 0) {
+        toast.warning(`${res.data.errors.length} row(s) had warnings or errors.`);
+      }
       fetchStudents();
       setImportOpen(false);
+      setImportFile(null);
     } catch (e: any) {
       toast.error(e?.response?.data?.error || "Import failed");
     } finally {
@@ -479,8 +498,8 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
 
   const downloadStudentTemplate = () => {
     const csv = [
-      "First Name,Last Name,University ID,Email,Parent Email,Parent Telegram,School,Department,Section,Year,Semester",
-      "Abebe,Kebede,UGR/10001/24,abebe.kebede@example.com,parent1@example.com,@kebede_parent,AME,AME-DEPT,A,1,1",
+      "First Name,Last Name,University ID,Email,Student Phone,Parent Email,Parent Telegram,Parent Phone,School,Department,Section,Year,Semester",
+      "Abebe,Kebede,UGR/10001/24,abebe.kebede@example.com,+251911223344,parent1@example.com,@kebede_parent,+251922334455,AME,AME-DEPT,A,1,1",
     ].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -491,13 +510,29 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
     URL.revokeObjectURL(url);
   };
 
+  const downloadContactUpdateTemplate = () => {
+    const csv = [
+      "University ID,Student Email,Student Phone,Parent Email,Parent Telegram,Parent Phone",
+      "UGR/10001/24,abebe.kebede@example.com,+251911223344,parent1@example.com,@kebede_parent,+251922334455",
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "student_contact_update_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const filtered = students.filter((s) => {
     if (!search) return true;
     const name = `${s.first_name} ${s.last_name}`.toLowerCase();
     return (
       name.includes(search.toLowerCase()) ||
       s.student_id.toLowerCase().includes(search.toLowerCase()) ||
-      s.email.toLowerCase().includes(search.toLowerCase())
+      s.email.toLowerCase().includes(search.toLowerCase()) ||
+      (s.phone && s.phone.toLowerCase().includes(search.toLowerCase())) ||
+      (s.parent_phone && s.parent_phone.toLowerCase().includes(search.toLowerCase()))
     );
   });
 
@@ -516,17 +551,16 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
   const addYears = yearOptionsFor(addForm.programme_id);
   const editYears = yearOptionsFor(editForm.programme_id);
 
-
   const downloadAllCredentialsCsv = () => {
     if (filtered.length === 0) {
       toast.error("No students to export");
       return;
     }
     const rows = [
-      "Full Name,Student ID,Email,School,Department,Section",
+      "Full Name,Student ID,Email,Student Phone,Parent Email,Parent Telegram,Parent Phone,School,Department,Section",
       ...filtered.map(
         (s) =>
-          `"${s.first_name} ${s.last_name}","${s.student_id}","${s.email}","${s.programme_name || ""}","${s.department_name || ""}","${s.current_section?.section_name || ""}"`,
+          `"${s.first_name} ${s.last_name}","${s.student_id}","${s.email}","${s.phone || ""}","${s.parent_email || ""}","${s.parent_telegram || ""}","${s.parent_phone || ""}","${s.programme_name || ""}","${s.department_name || ""}","${s.current_section?.section_name || ""}"`,
       ),
     ];
     const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
@@ -720,10 +754,16 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
                   Email
                 </th>
                 <th className="text-left px-6 py-3 font-medium text-muted-foreground">
+                  Student Phone
+                </th>
+                <th className="text-left px-6 py-3 font-medium text-muted-foreground">
                   Parent Telegram
                 </th>
                 <th className="text-left px-6 py-3 font-medium text-muted-foreground">
                   Parent Email
+                </th>
+                <th className="text-left px-6 py-3 font-medium text-muted-foreground">
+                  Parent Phone
                 </th>
                 {isAdmin && (
                   <th className="text-right px-6 py-3 font-medium text-muted-foreground">
@@ -736,7 +776,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
               {loading && (
                 <tr>
                   <td
-                    colSpan={isAdmin ? 9 : 7}
+                    colSpan={isAdmin ? 11 : 9}
                     className="text-center py-12 text-muted-foreground"
                   >
                     Loading students...
@@ -746,7 +786,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
               {!loading && filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={isAdmin ? 9 : 7}
+                    colSpan={isAdmin ? 11 : 9}
                     className="text-center py-12 text-muted-foreground"
                   >
                     No students found
@@ -788,6 +828,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
                     {s.department_name || "—"}
                   </td>
                   <td className="px-6 py-4 text-muted-foreground">{s.email}</td>
+                  <td className="px-6 py-4 text-muted-foreground">{s.phone || "—"}</td>
                   <td className="px-6 py-4 text-muted-foreground">
                     {s.parent_telegram ? (
                       <span className="text-blue-500">
@@ -800,6 +841,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
                   <td className="px-6 py-4 text-muted-foreground">
                     {s.parent_email || "—"}
                   </td>
+                  <td className="px-6 py-4 text-muted-foreground">{s.parent_phone || "—"}</td>
                   {isAdmin && (
                     <td className="px-6 py-4">
                       <div className="flex items-center justify-end gap-2">
@@ -1027,6 +1069,35 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Student Phone
+                </p>
+                <input
+                  value={editForm.phone}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, phone: e.target.value })
+                  }
+                  placeholder="+251..."
+                  className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Parent Phone
+                </p>
+                <input
+                  value={editForm.parent_phone}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, parent_phone: e.target.value })
+                  }
+                  placeholder="+251..."
+                  className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </div>
+
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setEditOpen(false)}>
                 Cancel
@@ -1215,7 +1286,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Parent Email *
+                  Parent Email
                 </p>
                 <input
                   value={addForm.parent_email}
@@ -1227,7 +1298,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Parent Telegram *
+                  Parent Telegram
                 </p>
                 <input
                   value={addForm.parent_telegram}
@@ -1235,6 +1306,35 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
                     setAddForm({ ...addForm, parent_telegram: e.target.value })
                   }
                   placeholder="@username"
+                  className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Student Phone
+                </p>
+                <input
+                  value={addForm.phone}
+                  onChange={(e) =>
+                    setAddForm({ ...addForm, phone: e.target.value })
+                  }
+                  placeholder="+251..."
+                  className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Parent Phone
+                </p>
+                <input
+                  value={addForm.parent_phone}
+                  onChange={(e) =>
+                    setAddForm({ ...addForm, parent_phone: e.target.value })
+                  }
+                  placeholder="+251..."
                   className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
@@ -1300,47 +1400,120 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display">
-              Bulk Import Students
+              Bulk Import Students (Excel / CSV)
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
-            <div className="p-4 bg-muted/30 rounded-lg text-sm text-muted-foreground space-y-2">
-              <p className="font-medium text-foreground">
-                CSV Format Required:
+            <div className="p-4 bg-muted/30 rounded-lg text-sm text-muted-foreground space-y-2 border border-border/50">
+              <p className="font-semibold text-foreground flex items-center gap-1.5">
+                <Upload className="w-4 h-4 text-primary" /> Supported Formats: Excel (.xlsx, .xls) & CSV
               </p>
-              <p className="font-mono text-xs">
-                First Name, Last Name, University ID, Email, Parent Email,
-                Parent Telegram, School, Department, Section, Year, Semester
+              <p className="text-xs leading-relaxed">
+                Upload your Registrar list or Google Form response export. Students are matched by <span className="font-medium text-foreground">University ID</span> (case-insensitive), updating contact details without creating duplicate records or distorting official names.
               </p>
-              <p>
-                The <span className="font-medium">School</span> (programme code) and <span className="font-medium">Department</span>{" "}
-                must match codes already set up in the system. The student will be automatically enrolled in all classes given to the specified <span className="font-medium">Section</span>, <span className="font-medium">Year</span>, and <span className="font-medium">Semester</span>.
+              <p className="text-xs text-primary/90 font-medium">
+                ✨ Missing Schools, Departments, and Sections will be automatically created!
               </p>
-              <button
-                onClick={downloadStudentTemplate}
-                className="text-xs text-primary hover:underline flex items-center gap-1"
-              >
-                <Download className="w-3.5 h-3.5" /> Download CSV template
-              </button>
+              <div className="flex flex-col gap-1 pt-1">
+                <button
+                  onClick={downloadStudentTemplate}
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Full Registrar CSV template
+                </button>
+                <button
+                  onClick={downloadContactUpdateTemplate}
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Google Form Contact Update template
+                </button>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Upload CSV File
-              </p>
+
+            {/* Optional Overrides */}
+            <div className="space-y-3 pt-1">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Target Semester
+                </label>
+                <select
+                  value={importSemester}
+                  onChange={(e) => setImportSemester(e.target.value)}
+                  className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Auto-detect (or Current Active Semester)</option>
+                  {semesters.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label} {s.is_current ? "(Current Active)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    School (Optional)
+                  </label>
+                  <select
+                    value={importProgramme}
+                    onChange={(e) => setImportProgramme(e.target.value)}
+                    className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Auto-detect from file</option>
+                    {programmes.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Study Year (Optional)
+                  </label>
+                  <select
+                    value={importYear}
+                    onChange={(e) => setImportYear(e.target.value)}
+                    className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Auto-detect from ID / Title</option>
+                    {[1, 2, 3, 4, 5, 6].map((y) => (
+                      <option key={y} value={y}>Year {y}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* File input */}
+            <div className="space-y-1.5 pt-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Choose Excel / CSV File *
+              </label>
               <input
                 type="file"
-                accept=".csv"
-                onChange={handleBulkImport}
+                accept=".xlsx, .xls, .csv"
+                onChange={(e) => setImportFile(e.target.files?.[0] || null)}
                 disabled={importing}
-                className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none"
+                className="w-full border border-input rounded-lg px-3 py-2 text-sm bg-background outline-none cursor-pointer file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
               />
-              {importing && (
-                <p className="text-xs text-muted-foreground">Importing...</p>
+              {importFile && (
+                <p className="text-xs text-primary font-medium">
+                  Selected: {importFile.name} ({(importFile.size / 1024).toFixed(1)} KB)
+                </p>
               )}
             </div>
-            <div className="flex justify-end">
-              <Button variant="outline" onClick={() => setImportOpen(false)}>
-                Close
+
+            <div className="flex justify-end gap-2 pt-3">
+              <Button variant="outline" onClick={() => setImportOpen(false)} disabled={importing}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleBulkImport}
+                disabled={importing || !importFile}
+                className="gap-2 bg-primary hover:bg-primary/90"
+              >
+                <Upload className="w-4 h-4" />
+                {importing ? "Importing..." : "Upload & Register Students"}
               </Button>
             </div>
           </div>

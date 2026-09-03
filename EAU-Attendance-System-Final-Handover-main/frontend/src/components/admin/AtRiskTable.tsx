@@ -204,7 +204,7 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
         >
           <option value="all">All statuses</option>
           <option value="at-risk">At Risk</option>
-          <option value="cannot-sit-final">Cannot Sit Final Exam</option>
+          <option value="cannot-sit-final">Not Eligible for Final Exam</option>
         </select>
         <span className="text-xs text-muted-foreground ml-auto">
           {filteredStudents.length} student{filteredStudents.length !== 1 ? "s" : ""}
@@ -256,7 +256,7 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
               const pct = s.attendance_percentage;
               const projectedPct = s.projected_final_percentage ?? pct;
               const isBlocked = s.risk_status === "cannot_sit_final";
-              const statusLabel = s.display_status || (isBlocked ? "Cannot Sit Final Exam" : "At Risk");
+              const statusLabel = s.display_status || (isBlocked ? "Not Eligible for Final Exam" : "At Risk");
               return (
                 <tr
                   key={`${s.student_id}-${i}`}

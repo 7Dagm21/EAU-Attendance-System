@@ -56,8 +56,10 @@ api.interceptors.response.use(
 );
 
 // ── Auth ──────────────────────────────────────────────────────
-export const loginApi = (username: string, password: string) =>
-  api.post("/auth/login/", { username, password });
+export const loginApi = (username: string, password: string, role?: string) =>
+  api.post("/auth/login/", { username, password, role });
+export const getPublicUsersByRoleApi = (role?: string) =>
+  api.get("/auth/users-by-role/", { params: { role } });
 export const getMeApi = () => api.get("/auth/me/");
 
 // ── Programmes ────────────────────────────────────────────────
@@ -159,8 +161,10 @@ export const createStudentApi = (data: {
   last_name: string;
   student_id: string;
   email: string;
+  phone?: string;
   parent_email?: string;
   parent_telegram?: string;
+  parent_phone?: string;
   programme_id?: number;
   department_id?: number;
   section_id?: number;
@@ -171,13 +175,27 @@ export const deleteStudentApi = (id: number, hard?: boolean) =>
   api.delete(`/students/${id}/`, { params: hard ? { hard: "true" } : {} });
 export const bulkDeleteStudentsApi = (studentIds: number[], hard?: boolean) =>
   api.post("/students/bulk-delete/", { student_ids: studentIds, hard });
-export const bulkImportStudentsApi = (file: File) => {
+export const bulkImportStudentsApi = (
+  file: File,
+  params?: {
+    semester_id?: number;
+    programme_id?: number;
+    section_id?: number;
+    year?: number;
+  }
+) => {
   const formData = new FormData();
   formData.append("file", file);
+  if (params?.semester_id) formData.append("semester_id", String(params.semester_id));
+  if (params?.programme_id) formData.append("programme_id", String(params.programme_id));
+  if (params?.section_id) formData.append("section_id", String(params.section_id));
+  if (params?.year) formData.append("year", String(params.year));
+
   return api.post("/students/import/", formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
 };
+
 
 
 // ── Enrollments ───────────────────────────────────────────────
@@ -364,13 +382,15 @@ export const submitAttendanceImportApi = (file: File, session_hours?: number) =>
 export const downloadReportApi = async (
   type: "offering" | "student",
   id: number,
-  format: "pdf" | "csv",
+  format: "pdf" | "excel" | "xlsx" | "csv",
   reportType: "full" | "weekly" = "full",
   params?: {
     student?: number;
     offering?: number;
+    semester?: number;
     start_date?: string;
     end_date?: string;
+    status?: string;
   },
 ) => {
   const token = getToken("access_token");
@@ -381,9 +401,10 @@ export const downloadReportApi = async (
     type === "offering"
       ? `/reports/offering/${id}/`
       : `/reports/student/${id}/`;
+  const normalizedFormat = format === "excel" || format === "xlsx" ? "excel" : format;
   const response = await api.get(url, {
     params: {
-      rpt_format: format,
+      rpt_format: normalizedFormat,
       type: reportType,
       ...params,
     },
@@ -395,16 +416,17 @@ export const downloadReportApi = async (
 
   const xlsxMime =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  const blobType = format === "pdf" ? "application/pdf" : xlsxMime;
-  const fileExt = format === "pdf" ? "pdf" : "xlsx";
+  const blobType = normalizedFormat === "pdf" ? "application/pdf" : xlsxMime;
+  const fileExt = normalizedFormat === "pdf" ? "pdf" : "xlsx";
   const blob = new Blob([response.data], { type: blobType });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
+  const statusSuffix = params?.status && params.status !== "all" ? `_${params.status}` : "";
   link.download =
     type === "offering"
-      ? `offering_${id}_${reportType}.${fileExt}`
-      : `student_${id}.${fileExt}`;
+      ? `offering_${id}_${reportType}${statusSuffix}.${fileExt}`
+      : `student_${id}${statusSuffix}.${fileExt}`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -414,11 +436,12 @@ export const downloadReportApi = async (
 export const downloadStudentReportApi = (
   studentId: number,
   params?: {
-    rpt_format?: "pdf" | "csv";
+    rpt_format?: "pdf" | "excel" | "xlsx" | "csv";
     semester?: number;
     offering?: number;
     start_date?: string;
     end_date?: string;
+    status?: string;
   },
 ) => {
   return downloadReportApi(
@@ -437,10 +460,11 @@ export const getSummaryReportApi = (params?: {
   teacher?: number;
   start_date?: string;
   end_date?: string;
+  status?: string;
 }) => api.get("/reports/summary/", { params });
 
 export const downloadSummaryReportApi = async (
-  format: "pdf" | "csv",
+  format: "pdf" | "excel" | "xlsx" | "csv",
   params?: {
     semester?: number;
     programme?: number;
@@ -448,14 +472,16 @@ export const downloadSummaryReportApi = async (
     teacher?: number;
     start_date?: string;
     end_date?: string;
+    status?: string;
   },
 ) => {
   const token = getToken("access_token");
   if (!token) {
     throw new Error("Session expired. Please log in again.");
   }
+  const normalizedFormat = format === "excel" || format === "xlsx" ? "excel" : format;
   const response = await api.get("/reports/summary/", {
-    params: { rpt_format: format, ...params },
+    params: { rpt_format: normalizedFormat, ...params },
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -463,13 +489,14 @@ export const downloadSummaryReportApi = async (
   });
   const xlsxMime2 =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  const blobType2 = format === "pdf" ? "application/pdf" : xlsxMime2;
-  const fileExt2 = format === "pdf" ? "pdf" : "xlsx";
+  const blobType2 = normalizedFormat === "pdf" ? "application/pdf" : xlsxMime2;
+  const fileExt2 = normalizedFormat === "pdf" ? "pdf" : "xlsx";
   const blob = new Blob([response.data], { type: blobType2 });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
-  link.download = `attendance_summary_overview.${fileExt2}`;
+  const statusSuffix = params?.status && params.status !== "all" ? `_${params.status}` : "";
+  link.download = `attendance_summary_overview${statusSuffix}.${fileExt2}`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

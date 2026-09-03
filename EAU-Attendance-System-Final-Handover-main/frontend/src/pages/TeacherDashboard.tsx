@@ -514,7 +514,7 @@ export default function TeacherDashboard() {
                     <strong className="text-foreground font-mono">{currentOffering.course_code || "—"}</strong>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Credit Hours:</span>{" "}
+                    <span className="text-muted-foreground">Total Contact Hours:</span>{" "}
                     <strong className="text-foreground">{currentOffering.total_credit_hours} hrs</strong>
                   </div>
                 </div>

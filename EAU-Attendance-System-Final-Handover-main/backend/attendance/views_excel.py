@@ -197,7 +197,7 @@ class AttendanceTemplateView(APIView):
             ("   (Leave cell blank to skip that date - it will not be imported)", False, 10, "666666"),
             ("", False, 10, "000000"),
             ("3. Dropdowns: Click any yellow date cell to choose P, L, E, or A.", False, 10, "000000"),
-            ("4. Session Hours: You can select the class time (1.0, 1.5, 2.0, 3.0 hrs) from the dropdown.", False, 10, "1A4A0F"),
+            ("4. Total Contact Hours for this course section are pre-assigned by Admin. Teachers only mark P, L, E, or A for each date.", False, 10, "1A4A0F"),
             ("5. DO NOT change student names, IDs, or column headers.", False, 10, "CC0000"),
             ("6. Save the file and upload it in the Teacher Portal.", False, 10, "000000"),
             ("", False, 10, "000000"),
@@ -215,17 +215,21 @@ class AttendanceTemplateView(APIView):
         # ── Attendance sheet ──────────────────────────────────────────────────
         ws = wb.create_sheet('Attendance')
 
-        # Read session_hours from query parameter (e.g. ?session_hours=1.5 or 2.0 or 1.0)
-        session_hours_param = request.query_params.get('session_hours')
-        if session_hours_param:
+        total_contact_hours = float(offering.course.total_credit_hours)
+        n_dates = len(all_days)
+
+        param_hours = request.query_params.get('total_contact_hours') or request.query_params.get('session_hours')
+        if param_hours:
             try:
-                session_hours = float(session_hours_param)
-                if session_hours < 0.5 or session_hours > 8.0:
-                    session_hours = 1.5
+                parsed_ch = float(param_hours)
+                if parsed_ch > 0:
+                    total_contact_hours = parsed_ch
             except (ValueError, TypeError):
-                session_hours = 1.5
-        else:
-            session_hours = get_offering_session_hours(offering)
+                pass
+
+        session_hours = round(total_contact_hours / max(1, n_dates), 2)
+        if session_hours < 0.1:
+            session_hours = 0.5
 
         # Meta info rows
         teacher_name = "—"
@@ -247,7 +251,6 @@ class AttendanceTemplateView(APIView):
             ("Programme:",               offering.section.programme.name),
             ("Semester:",                str(offering.section.semester)),
             ("Teacher:",                 teacher_name),
-            ("Class Session Duration:",  f"{session_hours} hrs"),
             ("Total Students:",          str(len(students))),
             ("Generated:",               str(date.today())),
         ]
@@ -261,11 +264,8 @@ class AttendanceTemplateView(APIView):
         FIXED_COLS = 3  # cols 1-3
         # Date columns start at col 4
         DATE_START_COL = FIXED_COLS + 1
-        # After dates: Session Type, Hours
-        n_dates      = len(all_days)
-        SESSION_COL  = DATE_START_COL + n_dates
-        HOURS_COL    = SESSION_COL + 1
-        TOTAL_COLS   = HOURS_COL
+        CONTACT_HOURS_COL = DATE_START_COL + n_dates
+        TOTAL_COLS = CONTACT_HOURS_COL
 
         # ── Header row ────────────────────────────────────────────────────────
         headers_fixed = ["#", "Student Name", "Student ID"]
@@ -289,12 +289,12 @@ class AttendanceTemplateView(APIView):
             from openpyxl.comments import Comment
             cell.comment = Comment(d.isoformat(), "SAMS")
 
-        for col, h in [(SESSION_COL, "Session Type"), (HOURS_COL, "Session Hours")]:
-            cell = ws.cell(row=header_row, column=col, value=h)
-            cell.font      = _font(bold=True, color=C_HEADER_FG, size=10)
-            cell.fill      = _fill("2563EB")
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border    = _thin_border()
+        # Total Contact Hours column header next to last date column
+        cell_ch = ws.cell(row=header_row, column=CONTACT_HOURS_COL, value="Total Contact Hours")
+        cell_ch.font      = _font(bold=True, color=C_HEADER_FG, size=10)
+        cell_ch.fill      = _fill("15803D")
+        cell_ch.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell_ch.border    = _thin_border()
 
         # Row height for header
         ws.row_dimensions[header_row].height = 32
@@ -310,26 +310,6 @@ class AttendanceTemplateView(APIView):
             errorTitle='Invalid status',
         )
         ws.add_data_validation(dv)
-
-        dv_session = DataValidation(
-            type="list",
-            formula1='"theory,practical"',
-            allow_blank=False,
-            showErrorMessage=True,
-        )
-        ws.add_data_validation(dv_session)
-
-        dv_hours = DataValidation(
-            type="list",
-            formula1='"55 min,1 hr,1.5 hr,2 hr"',
-            allow_blank=False,
-            showErrorMessage=True,
-            error='Select: 55 min, 1 hr, 1.5 hr, or 2 hr',
-            errorTitle='Invalid session time',
-        )
-        ws.add_data_validation(dv_hours)
-
-        first_hours_cell_ref = f"${get_column_letter(HOURS_COL)}${header_row + 1}"
 
         for idx, student in enumerate(students):
             row = header_row + 1 + idx
@@ -350,7 +330,7 @@ class AttendanceTemplateView(APIView):
             c.alignment = Alignment(horizontal='center', vertical='center')
             c.border = _thin_border()
 
-            # Date cells — yellow, teacher fills
+            # Date cells — yellow, teacher fills P, L, E, A
             for i in range(n_dates):
                 col  = DATE_START_COL + i
                 cell = ws.cell(row=row, column=col, value="")
@@ -360,23 +340,12 @@ class AttendanceTemplateView(APIView):
                 cell.font      = _font(size=10)
                 dv.add(cell)
 
-            # Session type — default theory
-            c = ws.cell(row=row, column=SESSION_COL, value="theory")
-            c.fill = _fill(C_SUM_BG); c.font = _font(size=10)
-            c.alignment = Alignment(horizontal='center'); c.border = _thin_border()
-            dv_session.add(c)
-
-            # Session Hours:
-            # First student gets default "1.5 hr" with dropdown.
-            # All other students get formula pointing to the first student (e.g. =$J$11)
-            # When teacher changes the time for the first student, all students update automatically!
-            if idx == 0:
-                c = ws.cell(row=row, column=HOURS_COL, value="1.5 hr")
-            else:
-                c = ws.cell(row=row, column=HOURS_COL, value=f"={first_hours_cell_ref}")
-            c.fill = _fill(C_SUM_BG); c.font = _font(size=10, color="1A4A0F", bold=True)
-            c.alignment = Alignment(horizontal='center'); c.border = _thin_border()
-            dv_hours.add(c)
+            # Total Contact Hours cell — visible for all students next to Friday
+            c = ws.cell(row=row, column=CONTACT_HOURS_COL, value=f"{total_contact_hours:g} hrs")
+            c.fill = _fill(C_SUM_BG)
+            c.font = _font(size=10, color="1A4A0F", bold=True)
+            c.alignment = Alignment(horizontal='center', vertical='center')
+            c.border = _thin_border()
 
             ws.row_dimensions[row].height = 20
 
@@ -386,8 +355,7 @@ class AttendanceTemplateView(APIView):
         ws.column_dimensions[get_column_letter(3)].width = 14  # ID
         for i in range(n_dates):
             ws.column_dimensions[get_column_letter(DATE_START_COL + i)].width = 10
-        ws.column_dimensions[get_column_letter(SESSION_COL)].width = 14
-        ws.column_dimensions[get_column_letter(HOURS_COL)].width = 14
+        ws.column_dimensions[get_column_letter(CONTACT_HOURS_COL)].width = 18
 
         # ── Freeze panes ──────────────────────────────────────────────────────
         ws.freeze_panes = ws.cell(row=header_row + 1,
@@ -404,15 +372,14 @@ class AttendanceTemplateView(APIView):
         meta_sheet['A4'] = 'n_dates'
         meta_sheet['B4'] = str(n_dates)
         meta_sheet['A5'] = 'session_col'
-        meta_sheet['B5'] = str(SESSION_COL)
+        meta_sheet['B5'] = '0'
         meta_sheet['A6'] = 'hours_col'
-        meta_sheet['B6'] = str(HOURS_COL)
+        meta_sheet['B6'] = str(CONTACT_HOURS_COL)
         meta_sheet['A7'] = 'session_hours'
         meta_sheet['B7'] = str(session_hours)
         # Store dates row
         for i, d in enumerate(all_days):
             meta_sheet.cell(row=8, column=i + 1, value=d.isoformat())
-        meta_sheet.sheet_state = 'hidden'
         meta_sheet.sheet_state = 'hidden'
 
         # ── Stream response ───────────────────────────────────────────────────
@@ -543,9 +510,12 @@ class AttendanceImportView(APIView):
 
         data_start = header_row + 1
 
-        # Read master session time from first student row
-        master_hours_val = ws.cell(row=data_start, column=hours_col).value
-        master_hours = parse_session_hours_val(master_hours_val, default=session_hours)
+        # Read master session time from first student row if hours_col exists
+        if hours_col > 0:
+            master_hours_val = ws.cell(row=data_start, column=hours_col).value
+            master_hours = parse_session_hours_val(master_hours_val, default=session_hours)
+        else:
+            master_hours = session_hours
 
         for row_idx in range(data_start, ws.max_row + 1):
             student_id_val = ws.cell(row=row_idx, column=3).value
@@ -563,16 +533,22 @@ class AttendanceImportView(APIView):
                 })
                 continue
 
-            session_type_val = ws.cell(row=row_idx, column=session_col).value
-            session_type     = str(session_type_val or 'theory').lower().strip()
-            if session_type not in ('theory', 'practical'):
+            if session_col > 0:
+                session_type_val = ws.cell(row=row_idx, column=session_col).value
+                session_type     = str(session_type_val or 'theory').lower().strip()
+                if session_type not in ('theory', 'practical'):
+                    session_type = 'theory'
+            else:
                 session_type = 'theory'
 
-            hours_val = ws.cell(row=row_idx, column=hours_col).value
-            if hours_val is None or (isinstance(hours_val, str) and hours_val.startswith('=')):
-                hours = master_hours
+            if hours_col > 0:
+                hours_val = ws.cell(row=row_idx, column=hours_col).value
+                if hours_val is None or (isinstance(hours_val, str) and hours_val.startswith('=')):
+                    hours = master_hours
+                else:
+                    hours = parse_session_hours_val(hours_val, default=master_hours)
             else:
-                hours = parse_session_hours_val(hours_val, default=master_hours)
+                hours = master_hours
 
             for i, att_date in enumerate(dates):
                 col        = date_start_col + i
@@ -692,15 +668,18 @@ class TeacherMonitoringView(APIView):
         from .models import TeachingSchedule, AttendanceRecord, CourseOffering
         from datetime import date, timedelta
 
-        # Scope: admin sees all; teacher sees only their own
+        from django.db.models import Q
+        # Scope: admin sees all; teacher sees only their own (primary or co-teacher)
         if request.user.role == 'admin':
             offerings = CourseOffering.objects.select_related(
                 'course', 'section', 'teacher'
-            ).all()
+            ).prefetch_related('secondary_teachers').all()
         else:
             offerings = CourseOffering.objects.select_related(
                 'course', 'section', 'teacher'
-            ).filter(teacher=request.user)
+            ).prefetch_related('secondary_teachers').filter(
+                Q(teacher=request.user) | Q(secondary_teachers=request.user)
+            ).distinct()
 
         today = date.today()
         # Look back up to 30 days
@@ -708,7 +687,7 @@ class TeacherMonitoringView(APIView):
 
         result = []
         for offering in offerings:
-            if not offering.teacher:
+            if not offering.teacher and not offering.secondary_teachers.exists():
                 continue
             slots = TeachingSchedule.objects.filter(course_offering=offering)
             if not slots.exists():
