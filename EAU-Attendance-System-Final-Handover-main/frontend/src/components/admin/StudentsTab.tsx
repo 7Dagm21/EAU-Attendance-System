@@ -575,7 +575,7 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
 
   return (
     <>
-      <Card className="shadow-card border-border/50">
+      <Card className="shadow-card border-border/50 overflow-hidden">
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
@@ -718,8 +718,8 @@ const StudentsTab = ({ programmes, scopeParams = {} }: StudentsTabProps) => {
             )}
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm min-w-[1000px]">
             <thead className="border-y border-border bg-muted/30">
               <tr>
                 {isAdmin && (

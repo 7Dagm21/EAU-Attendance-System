@@ -89,37 +89,50 @@ def calculate_attendance_status(student, offering, cutoff_date=None):
 
 def send_attendance_status_warning(student, course, summary, status_label):
     if status_label == 'cannot_sit_final':
-        subject = f"Final Exam Eligibility Warning — {course.name}"
+        subject = f"Final Exam Eligibility Warning / የፈተና መቀመጥ መብት ማስታወቂያ — {course.name}"
         title = "Final Exam Eligibility Notice"
+        amharic_title = "የፈተና መቀመጥ መብት ማስታወቂያ"
         action_text = (
             f"Based on the attendance recorded so far, the best possible final attendance is "
             f"{summary['projected_final_percentage']}%, which is below the 85% requirement. "
             f"This means you are not eligible for the final examination."
         )
+        amharic_action_text = (
+            f"እስከ አሁን በተመዘገበው መረጃ መሰረት ሊደረስበት የሚችለው ከፍተኛው የአቴንዳንስ መጠን "
+            f"{summary['projected_final_percentage']}% ሲሆን፣ ይህም ከሚፈለገው 85% በታች ነው። "
+            f"በመሆኑም ለማጠቃለያ ፈተና ለመቀመጥ ብቁ አይደሉም።"
+        )
     else:
-        subject = f"Attendance Warning — {course.name}"
+        subject = f"Attendance Warning / የአቴንዳንስ መጠን ማስጠንቀቂያ — {course.name}"
         title = "Attendance Threshold Warning"
+        amharic_title = "የአቴንዳንስ መጠን ማስጠንቀቂያ"
         action_text = (
             f"Your current attendance is {summary['current_percentage']}% based on the "
             f"classes held so far. Please improve attendance immediately to remain eligible for the final exam."
         )
+        amharic_action_text = (
+            f"እስከ አሁን ከተካሄዱት ክፍለ ጊዜያት አንፃር የእርስዎ የአሁኑ የአቴንዳንስ መጠን {summary['current_percentage']}% ነው። "
+            f"ለማጠቃለያ ፈተና ብቁ ሆነው ለመቀጠል እባክዎ በአስቸኳይ በክፍል ይገኙ።"
+        )
 
     body = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
         <div style="background-color: #1B3A6B; padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">EAU Attendance System</h1>
+            <h1 style="color: white; margin: 0; font-size: 22px;">EAU Attendance System</h1>
+            <p style="color: #cbd5e1; margin: 4px 0 0 0; font-size: 13px;">Official Attendance Warning / የአቴንዳንስ መጠን ማስጠንቀቂያ</p>
         </div>
-        <div style="padding: 30px; background-color: #f9f9f9;">
-            <h2 style="color: #f39c12;">{title}</h2>
-            <p>Dear {student.full_name},</p>
-            <p><strong>{course.name}</strong></p>
-            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <div style="padding: 24px; background-color: #ffffff;">
+            <!-- ENGLISH SECTION -->
+            <h2 style="color: #f39c12; margin-top: 0;">⚠️ {title}</h2>
+            <p style="font-size: 14px; color: #334155;">Dear {student.full_name},</p>
+            <p style="font-size: 14px; color: #334155; margin: 8px 0;"><strong>Course:</strong> {course.name}</p>
+            <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
                 <tr style="background-color: #1B3A6B; color: white;">
-                    <td style="padding: 10px;">Current Attendance</td>
-                    <td style="padding: 10px;">{summary['current_percentage']}%</td>
+                    <td style="padding: 10px; font-weight: bold;">Current Attendance</td>
+                    <td style="padding: 10px; font-weight: bold;">{summary['current_percentage']}%</td>
                 </tr>
                 <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px;">Best Possible Final Attendance</td>
+                    <td style="padding: 10px; font-weight: bold;">Best Possible Final Attendance</td>
                     <td style="padding: 10px;">{summary['projected_final_percentage']}%</td>
                 </tr>
                 <tr>
@@ -131,9 +144,38 @@ def send_attendance_status_warning(student, course, summary, status_label):
                     <td style="padding: 10px;">{summary['remaining_possible_hours']}</td>
                 </tr>
             </table>
-            <p>{action_text}</p>
-            <p style="color: #666; font-size: 12px;">
-                This is an automated message from the EAU Attendance Management System.
+            <p style="font-size: 14px; color: #334155;">{action_text}</p>
+
+            <!-- DIVIDER -->
+            <hr style="border: 0; border-top: 1px solid #cbd5e1; margin: 25px 0;" />
+
+            <!-- AMHARIC SECTION -->
+            <h2 style="color: #f39c12; margin-top: 0;">⚠️ {amharic_title}</h2>
+            <p style="font-size: 14px; color: #334155;">ውድ {student.full_name}፣</p>
+            <p style="font-size: 14px; color: #334155; margin: 8px 0;"><strong>ትምህርት (Course):</strong> {course.name}</p>
+            <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
+                <tr style="background-color: #1B3A6B; color: white;">
+                    <td style="padding: 10px; font-weight: bold;">የአሁኑ የአቴንዳንስ መጠን (Current)</td>
+                    <td style="padding: 10px; font-weight: bold;">{summary['current_percentage']}%</td>
+                </tr>
+                <tr style="background-color: #f2f2f2;">
+                    <td style="padding: 10px; font-weight: bold;">ሊደረስበት የሚችል ከፍተኛ መጠን (Best Possible)</td>
+                    <td style="padding: 10px;">{summary['projected_final_percentage']}%</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px;">የተካሄዱ ክፍለ ጊዜያት (Classes Held)</td>
+                    <td style="padding: 10px;">{summary['classes_held_hours']}</td>
+                </tr>
+                <tr style="background-color: #f2f2f2;">
+                    <td style="padding: 10px;">የቀሩ ክፍለ ጊዜያት (Remaining Classes)</td>
+                    <td style="padding: 10px;">{summary['remaining_possible_hours']}</td>
+                </tr>
+            </table>
+            <p style="font-size: 14px; color: #334155;">{amharic_action_text}</p>
+
+            <p style="color: #64748b; font-size: 11px; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 12px;">
+                This is an automated message from the EAU Attendance Management System.<br/>
+                ይህ ከኢትዮጵያ አቪዬሽን ዩኒቨርሲቲ የአቴንዳንስ አስተዳደር የተላከ መልዕክት ነው።
             </p>
         </div>
     </div>
@@ -152,7 +194,10 @@ def send_attendance_status_warning(student, course, summary, status_label):
                 message=(
                     f"{title}: {student.full_name} in {course.name} has current attendance "
                     f"{summary['current_percentage']}% and projected final attendance "
-                    f"{summary['projected_final_percentage']}%."
+                    f"{summary['projected_final_percentage']}%.\n---\n"
+                    f"{amharic_title}: ተማሪ {student.full_name} በ {course.name} ትምህርት የአሁኑ የአቴንዳንስ መጠን "
+                    f"{summary['current_percentage']}% እና ሊደረስበት የሚችል ከፍተኛ መጠን "
+                    f"{summary['projected_final_percentage']}% ነው።"
                 ),
             )
     except Exception as e:
@@ -166,12 +211,26 @@ def send_attendance_status_warning(student, course, summary, status_label):
         "Please ensure the student improves attendance"
     )
 
+    amharic_parent_action_text = amharic_action_text.replace(
+        "የእርስዎ የአሁኑ የአቴንዳንስ መጠን",
+        f"የተማሪ {student.full_name} የአሁኑ የአቴንዳንስ መጠን"
+    ).replace(
+        "እባክዎ በአስቸኳይ በክፍል ይገኙ።",
+        "እባክዎ ተማሪው/ዋ በክፍል መገኘቱን/ቷን ያረጋግጡ።"
+    )
+
     parent_body = body.replace(
-        f"Dear {student.full_name}",
-        f"Dear Parent/Guardian of {student.full_name}"
+        f"Dear {student.full_name},",
+        f"Dear Parent/Guardian of {student.full_name},"
+    ).replace(
+        f"ውድ {student.full_name}፣",
+        f"ውድ የተማሪ {student.full_name} ወላጅ/አሳዳጊ፣"
     ).replace(
         action_text,
         parent_action_text
+    ).replace(
+        amharic_action_text,
+        amharic_parent_action_text
     )
     send_email(student.parent_email, subject, parent_body)
 
@@ -186,7 +245,10 @@ def send_attendance_status_warning(student, course, summary, status_label):
                 message=(
                     f"{title}: {student.full_name} in {course.name} has current attendance "
                     f"{summary['current_percentage']}% and projected final attendance "
-                    f"{summary['projected_final_percentage']}%."
+                    f"{summary['projected_final_percentage']}%.\n---\n"
+                    f"{amharic_title}: ተማሪ {student.full_name} በ {course.name} ትምህርት የአሁኑ የአቴንዳንስ መጠን "
+                    f"{summary['current_percentage']}% እና ሊደረስበት የሚችል ከፍተኛ መጠን "
+                    f"{summary['projected_final_percentage']}% ነው።"
                 ),
             )
     except Exception as e:
@@ -201,10 +263,17 @@ def send_attendance_status_warning(student, course, summary, status_label):
         telegram_message = (
             f"Dear Parent/Guardian,\n\n"
             f"{title} for {student.full_name} ({student.student_id})\n\n"
-            f"Course: {course.name}\n"
-            f"Current Attendance: {summary['current_percentage']}%\n"
-            f"Best Possible Final Attendance: {summary['projected_final_percentage']}%\n\n"
-            f"{parent_action_text}"
+            f"• Course: {course.name}\n"
+            f"• Current Attendance: {summary['current_percentage']}%\n"
+            f"• Best Possible Final Attendance: {summary['projected_final_percentage']}%\n\n"
+            f"{parent_action_text}\n\n"
+            f"----------------------------------------\n"
+            f"ውድ የተማሪ {student.full_name} ወላጅ/አሳዳጊ፣\n\n"
+            f"{amharic_title} ለተማሪ {student.full_name} ({student.student_id})\n\n"
+            f"• ትምህርት: {course.name}\n"
+            f"• የአሁኑ የአቴንዳንስ መጠን: {summary['current_percentage']}%\n"
+            f"• ሊደረስበት የሚችል ከፍተኛ መጠን: {summary['projected_final_percentage']}%\n\n"
+            f"{amharic_parent_action_text}"
         )
 
         payload = {
@@ -236,14 +305,18 @@ def send_threshold_warning(student, course, attended_sessions, total_sessions):
 def send_absence_alert(student, course, date, summary=None, status_label=None, session_type=None):
     """
     Sends a single consolidated absence alert (Email & Telegram) containing
-    session date, course, absence status, and updated attendance threshold metrics.
+    session date, course, absence status, and updated attendance threshold metrics
+    in both English (upper) and Amharic (lower).
     """
     course_name = getattr(course, 'name', str(course))
     session_str = f" ({session_type.title()})" if session_type else ""
 
     metric_rows_html = ""
+    amharic_metric_rows_html = ""
     telegram_metric_text = ""
+    amharic_telegram_metric_text = ""
     status_advice = "Please ensure the student maintains the minimum required attendance (85%) and attends upcoming sessions."
+    amharic_status_advice = "እባክዎ ተማሪው አነስተኛውን አስፈላጊ የአቴንዳንስ መጠን (85%) ጠብቆ በቀጣይ ክፍለ ጊዜያት መገኘቱን ያረጋግጡ።"
 
     if summary:
         current_pct = summary.get('current_percentage', 0.0)
@@ -256,15 +329,27 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
                 f"🚨 CRITICAL: Best possible final attendance is {proj_pct}%, which is below the 85.0% threshold. "
                 f"The student is not eligible for final exam."
             )
+            amharic_status_advice = (
+                f"🚨 አሳሳቢ: ሊደረስበት የሚችለው ከፍተኛው የአቴንዳንስ መጠን {proj_pct}% ሲሆን፣ ይህም ከአነስተኛው 85.0% መስፈርት በታች ነው። "
+                f"ተማሪው/ዋ ለፈተና አይቀመጥም።"
+            )
         elif status_label == 'at_risk' or current_pct < 85.0:
             status_advice = (
                 f"⚠️ WARNING: Current attendance is {current_pct}%, below the required 85.0% minimum threshold. "
                 f"Please ensure regular attendance in upcoming sessions to remain eligible for the final exam."
             )
+            amharic_status_advice = (
+                f"⚠️ ማስጠንቀቂያ: የአሁኑ የአቴንዳንስ መጠን {current_pct}% ሲሆን፣ ከሚፈለገው 85.0% መስፈርት በታች ነው። "
+                f"ለፈተና ብቁ ለመሆን እባክዎ በየክፍለ ጊዜው መገኘታቸውን ያረጋግጡ።"
+            )
         else:
             status_advice = (
                 f"ℹ️ Status: Current attendance is {current_pct}% (Best possible: {proj_pct}%). "
                 f"Please ensure the student attends subsequent sessions."
+            )
+            amharic_status_advice = (
+                f"ℹ️ ሁኔታ: የአሁኑ የአቴንዳንስ መጠን {current_pct}% ነው (ከፍተኛው: {proj_pct}%)። "
+                f"እባክዎ በቀጣይ ክፍለ ጊዜያት መገኘታቸውን ያረጋግጡ።"
             )
 
         pct_color = '#e74c3c' if current_pct < 85.0 else '#27ae60'
@@ -282,6 +367,20 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
                 <td style="padding: 10px;">{classes_held} held / {rem_classes} remaining</td>
             </tr>
         """
+        amharic_metric_rows_html = f"""
+            <tr style="background-color: #f8fafc;">
+                <td style="padding: 10px; font-weight: bold;">የአሁኑ የአቴንዳንስ መጠን (Current)</td>
+                <td style="padding: 10px; font-weight: bold; color: {pct_color};">{current_pct}%</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px;">ሊደረስበት የሚችል ከፍተኛ መጠን (Best Possible)</td>
+                <td style="padding: 10px;">{proj_pct}%</td>
+            </tr>
+            <tr style="background-color: #f8fafc;">
+                <td style="padding: 10px;">የተካሄዱ / የቀሩ ክፍለ ጊዜያት (Held / Remaining)</td>
+                <td style="padding: 10px;">{classes_held} የተካሄዱ / {rem_classes} የቀሩ</td>
+            </tr>
+        """
 
         telegram_metric_text = (
             f"📊 *Attendance Summary:*\n"
@@ -289,19 +388,27 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
             f"• *Best Possible Final:* {proj_pct}%\n"
             f"• *Required Minimum:* 85.0%\n\n"
         )
+        amharic_telegram_metric_text = (
+            f"📊 *የአቴንዳንስ ማጠቃለያ:*\n"
+            f"• *የአሁኑ Attendance:* {current_pct}%\n"
+            f"• *ሊደረስበት የሚችል ከፍተኛ:* {proj_pct}%\n"
+            f"• *የሚፈለግ አነስተኛ መጠን:* 85.0%\n\n"
+        )
 
-    subject = f"Absence Alert — {student.full_name} — {course_name}"
+    subject = f"Absence Alert / የቀሪ ማስጠንቀቂያ — {student.full_name} — {course_name}"
     student_display_name = student.full_name
 
     body = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
         <div style="background-color: #1B3A6B; padding: 20px; text-align: center;">
             <h1 style="color: white; margin: 0; font-size: 22px;">EAU Attendance System</h1>
-            <p style="color: #cbd5e1; margin: 4px 0 0 0; font-size: 13px;">Official Absence & Attendance Notification</p>
+            <p style="color: #cbd5e1; margin: 4px 0 0 0; font-size: 13px;">Official Absence & Attendance Notification / ኦፊሴላዊ የክፍል መቅረት ማስጠንቀቂያ</p>
         </div>
         <div style="padding: 24px; background-color: #ffffff;">
+            <!-- ENGLISH SECTION -->
             <h2 style="color: #e74c3c; margin-top: 0; font-size: 18px;">⚠️ Absence Notification</h2>
             <p style="font-size: 14px; color: #334155;">Dear {student_display_name},</p>
+            <p style="font-size: 14px; color: #334155; margin: 8px 0;"><strong>Course:</strong> {course_name}{session_str}</p>
             <p style="font-size: 14px; color: #334155;">This is an automated notification that you were marked <strong>ABSENT</strong> for the following class session:</p>
             
             <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
@@ -329,8 +436,43 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
                 {status_advice}
             </div>
 
+            <!-- DIVIDER -->
+            <hr style="border: 0; border-top: 1px solid #cbd5e1; margin: 25px 0;" />
+
+            <!-- AMHARIC SECTION -->
+            <h2 style="color: #e74c3c; margin-top: 0; font-size: 18px;">⚠️ የክፍል መቅረት ማስጠንቀቂያ</h2>
+            <p style="font-size: 14px; color: #334155;">ውድ {student_display_name}፣</p>
+            <p style="font-size: 14px; color: #334155; margin: 8px 0;"><strong>ትምህርት (Course):</strong> {course_name}{session_str}</p>
+            <p style="font-size: 14px; color: #334155;">ይህ በሚከተለው የትምህርት ክፍለ ጊዜ ቀሪ ተብለው መመዝገብዎን የሚያሳውቅ በራስ-ሰር የተላከ መልዕክት ነው፡</p>
+            
+            <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
+                <tr style="background-color: #1B3A6B; color: white;">
+                    <td style="padding: 10px; font-weight: bold;">ትምህርት (Course)</td>
+                    <td style="padding: 10px;">{course_name}{session_str}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                    <td style="padding: 10px; font-weight: bold;">ቀን (Date)</td>
+                    <td style="padding: 10px;">{date}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; font-weight: bold;">የተማሪ መታወቂያ (Student ID)</td>
+                    <td style="padding: 10px;">{student.student_id}</td>
+                </tr>
+                <tr style="background-color: #fef2f2; color: #991b1b;">
+                    <td style="padding: 10px; font-weight: bold;">የክፍለ ጊዜ ሁኔታ (Status)</td>
+                    <td style="padding: 10px; font-weight: bold;">ቀሪ (ABSENT)</td>
+                </tr>
+                {amharic_metric_rows_html}
+            </table>
+            
+            <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px; margin: 16px 0; font-size: 13px; color: #92400e; border-radius: 0 6px 6px 0;">
+                <strong>ማስጠንቀቂያ እና የሚፈለግ እርምጃ (Notice & Action):</strong><br/>
+                {amharic_status_advice}
+            </div>
+
             <p style="color: #64748b; font-size: 11px; margin-top: 20px; border-top: 1px solid #f1f5f9; padding-top: 12px;">
-                This is an automated message from the Ethiopian Aviation University Attendance Management System. If you have an authorized excuse, please provide official documentation to your department.
+                This is an automated message from the Ethiopian Aviation University Attendance Management System. If you have an authorized excuse, please provide official documentation to your department.<br/><br/>
+                ይህ ከኢትዮጵያ አቪዬሽን ዩኒቨርሲቲ የአቴንዳንስ አስተዳደር ስርዓት በራስ-ሰር የተላከ መልዕክት ነው። ህጋዊ ምክንያት ካለዎት እባክዎ ለትምህርት ክፍልዎ ማስረጃ ያቅርቡ።
             </p>
         </div>
     </div>
@@ -348,6 +490,12 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
         ).replace(
             "that you were marked",
             f"that your student {student_display_name} was marked"
+        ).replace(
+            f"ውድ {student_display_name}፣",
+            f"ውድ የተማሪ {student.full_name} ወላጅ/አሳዳጊ የ {student_display_name}፣"
+        ).replace(
+            "ቀሪ ተብለው መመዝገብዎን የሚያሳውቅ",
+            f"ተማሪዎ {student_display_name} ቀሪ ተብሎ/ላ መመዝገቡን/ቷን የሚያሳውቅ"
         )
         send_email(student.parent_email, subject, parent_body)
 
@@ -355,19 +503,26 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
     try:
         from .models import User, Notification
         summary_txt = f" Current attendance: {summary['current_percentage']}%." if summary else ""
+        amharic_summary_txt = f" የአሁኑ የአቴንዳንስ መጠን: {summary['current_percentage']}%።" if summary else ""
         student_user = User.objects.filter(email=student.email).first()
         if student_user:
             Notification.objects.create(
                 recipient=student_user,
                 notification_type='absence',
-                message=f"You were marked absent in {course_name} on {date}.{summary_txt}"
+                message=(
+                    f"You were marked absent in {course_name} on {date}.{summary_txt}\n---\n"
+                    f"በ {course_name} ትምህርት በ {date} ቀን ቀሪ ተብለው ተመዝግበዋል።{amharic_summary_txt}"
+                )
             )
         parent_user = User.objects.filter(email=student.parent_email).first()
         if parent_user:
             Notification.objects.create(
                 recipient=parent_user,
                 notification_type='absence',
-                message=f"Your student {student.full_name} was marked absent in {course_name} on {date}.{summary_txt}"
+                message=(
+                    f"Your student {student.full_name} was marked absent in {course_name} on {date}.{summary_txt}\n---\n"
+                    f"ተማሪዎ {student.full_name} በ {course_name} ትምህርት በ {date} ቀን ቀሪ ተብሎ/ላ ተመዝግቧል።{amharic_summary_txt}"
+                )
             )
     except Exception as e:
         print(f"Error creating in-app notification: {e}")
@@ -387,12 +542,21 @@ def send_absence_alert(student, course, date, summary=None, status_label=None, s
             f"• Date: {date}{session_str}\n"
             f"• Status: ❌ ABSENT\n\n"
             f"{telegram_metric_text}"
-            f"📢 Notice:\n{status_advice}"
+            f"📢 Notice:\n{status_advice}\n\n"
+            f"----------------------------------------\n"
+            f"ውድ የተማሪ {student.full_name} ወላጅ/አሳዳጊ፣\n\n"
+            f"ይህ ከኢትዮጵያ አቪዬሽን ዩኒቨርሲቲ የአቴንዳንስ አስተዳደር ስርዓት በራስ-ሰር የተላከ የክፍል መቅረት ማስጠንቀቂያ ነው።\n\n"
+            f"• ተማሪ: {student.full_name} ({student.student_id})\n"
+            f"• ትምህርት: {course_name}\n"
+            f"• ቀን: {date}{session_str}\n"
+            f"• ሁኔታ: ❌ ቀሪ (ABSENT)\n\n"
+            f"{amharic_telegram_metric_text}"
+            f"📢 ማስጠንቀቂያ:\n{amharic_status_advice}"
         )
 
         payload = {
             'chat_id': student.parent_telegram_chat_id,
-            'text': f"⚠️ Absence Alert — {student.full_name} — {course_name}\n\n{telegram_message}"
+            'text': f"⚠️ Absence Alert / የቀሪ ማስጠንቀቂያ — {student.full_name} — {course_name}\n\n{telegram_message}"
         }
         try:
             requests.post(url, data=payload, verify=False, timeout=10)

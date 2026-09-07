@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertTriangle, Send, Search, X } from "lucide-react";
+import { AlertTriangle, Send, Search, X, Trash2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { getAtRiskApi, getSemestersApi, sendAtRiskNotificationsApi } from "@/api/axios";
@@ -70,21 +70,22 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
     fetchSemesters();
   }, []);
 
+  const fetchAtRisk = async () => {
+    try {
+      setLoading(true);
+      const params: Record<string, any> = { ...scopeParams };
+      const semesterFilter = selectedSemesterId ? Number(selectedSemesterId) : semesterId;
+      if (semesterFilter) params.semester = semesterFilter;
+      const res = await getAtRiskApi(params);
+      setStudents(res.data.students || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchAtRisk = async () => {
-      try {
-        setLoading(true);
-        const params: Record<string, any> = { ...scopeParams };
-        const semesterFilter = selectedSemesterId ? Number(selectedSemesterId) : semesterId;
-        if (semesterFilter) params.semester = semesterFilter;
-        const res = await getAtRiskApi(params);
-        setStudents(res.data.students || []);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchAtRisk();
   }, [semesterId, selectedSemesterId, JSON.stringify(scopeParams)]);
 
@@ -106,6 +107,17 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
     return matchesSearch && matchesStatus;
   });
   const display = fullPage ? filteredStudents : filteredStudents.slice(0, 5);
+
+  const handleClearList = () => {
+    if (students.length === 0 && !searchQuery && filterStatus === "all") {
+      toast.info("List is already empty.");
+      return;
+    }
+    setStudents([]);
+    setSearchQuery("");
+    setFilterStatus("all");
+    toast.success("List cleared.");
+  };
 
   const handleBulkNotify = async () => {
     if (filteredStudents.length === 0) {
@@ -142,7 +154,7 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
   };
 
   return (
-    <Card className="shadow-card border-border/50">
+    <Card className="shadow-card border-border/50 overflow-hidden">
       <CardHeader className="flex flex-row items-center justify-between pb-4">
         <div className="flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-destructive" />
@@ -155,12 +167,30 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
             </span>
           )}
         </div>
-        <button
-          onClick={handleBulkNotify}
-          className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
-        >
-          <Send className="w-3.5 h-3.5" /> Bulk Notify
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleClearList}
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-destructive/10 hover:text-destructive text-muted-foreground transition-colors"
+            title="Clear list"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Clear List
+          </button>
+          {students.length === 0 && (
+            <button
+              onClick={fetchAtRisk}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground transition-colors"
+              title="Refresh list"
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> Refresh
+            </button>
+          )}
+          <button
+            onClick={handleBulkNotify}
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+          >
+            <Send className="w-3.5 h-3.5" /> Bulk Notify
+          </button>
+        </div>
       </CardHeader>
       <div className="px-4 pb-3 flex flex-wrap gap-3 items-center">
         <label className="text-xs text-muted-foreground whitespace-nowrap">
@@ -210,8 +240,8 @@ const AtRiskTable = ({ semesterId, fullPage = false, scopeParams = {} }: AtRiskT
           {filteredStudents.length} student{filteredStudents.length !== 1 ? "s" : ""}
         </span>
       </div>
-      <CardContent className="p-0">
-        <table className="w-full text-sm">
+      <CardContent className="p-0 overflow-x-auto">
+        <table className="w-full text-sm min-w-[800px]">
           <thead className="border-y border-border bg-muted/30">
             <tr>
               <th className="text-left px-6 py-3 font-medium text-muted-foreground">

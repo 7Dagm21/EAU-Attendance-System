@@ -116,6 +116,34 @@ const STATUS_COLORS: Record<string, string> = {
   "At Risk": "text-red-600 bg-red-50 border-red-200",
 };
 
+const getPieColor = (name: string): string => {
+  const s = (name || "").toLowerCase();
+  if (s.includes("risk") || s.includes("cannot") || s.includes("final") || s.includes("critical")) {
+    return "#dc2626"; // Red
+  }
+  if (s.includes("warn")) {
+    return "#f59e0b"; // Amber
+  }
+  return "#16a34a"; // Green
+};
+
+const getStatusBadgeStyle = (status: string): string => {
+  if (!status) return "text-green-600 bg-green-50 border-green-200";
+  const s = status.toLowerCase();
+  if (s.includes("risk") || s.includes("cannot") || s.includes("final") || s.includes("critical")) {
+    return "text-red-600 bg-red-50 border-red-200";
+  }
+  if (s.includes("warn")) {
+    return "text-amber-600 bg-amber-50 border-amber-200";
+  }
+  return "text-green-600 bg-green-50 border-green-200";
+};
+
+const formatPercent = (percent: number): string => {
+  const p = percent * 100;
+  return p % 1 === 0 ? `${p.toFixed(0)}%` : `${p.toFixed(1)}%`;
+};
+
 const ReportsTab = ({ courses }: ReportsTabProps) => {
   const { user, role } = useAuth();
 
@@ -127,7 +155,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     "student" | "course" | "summary"
   >("student");
   const [selectedOffering, setSelectedOffering] = useState<string>("");
-  const [filterOfferingTeacher, setFilterOfferingTeacher] = useState<string>("");
+  const [filterOfferingTeacher, setFilterOfferingTeacher] = useState<string>("all");
   const [selectedStudent, setSelectedStudent] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "at_risk" | "warning" | "safe">("all");
   const [reportType, setReportType] = useState<"full" | "weekly" | "custom">("full");
@@ -157,7 +185,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     semester: "",
     programme: isScoped && scopedProgrammeId ? String(scopedProgrammeId) : "all",
     department: "all",
-    teacher: "",
+    teacher: "all",
     start_date: "",
     end_date: "",
     status: "all",
@@ -200,7 +228,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
   useEffect(() => {
     if (offerings.length > 0) {
       const validForTeacher = offerings.filter((o) => {
-        if (filterOfferingTeacher === "all") return true;
+        if (!filterOfferingTeacher || filterOfferingTeacher === "all") return true;
         const tId = String(filterOfferingTeacher);
         if (String(o.teacher) === tId) return true;
         if (Array.isArray(o.secondary_teacher_ids) && o.secondary_teacher_ids.map(String).includes(tId)) return true;
@@ -212,7 +240,9 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
           setSelectedOffering(String(validForTeacher[0].id));
         }
       } else {
-        setSelectedOffering("");
+        if (offerings.length > 0 && !selectedOffering) {
+          setSelectedOffering(String(offerings[0].id));
+        }
       }
     }
   }, [filterOfferingTeacher, offerings]);
@@ -243,13 +273,7 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
     // getUsersApi with role=teacher — backend scopes by programme for dean/dept_head
     getUsersApi({ role: "teacher" })
       .then((res) => {
-        const list = res.data || [];
-        setTeachers(list);
-        if (list.length > 0) {
-          const firstTId = String(list[0].id);
-          setFilterOfferingTeacher((prev) => (prev && prev !== "all" ? prev : firstTId));
-          setSummaryFilters((prev) => ({ ...prev, teacher: prev.teacher && prev.teacher !== "all" ? prev.teacher : firstTId }));
-        }
+        setTeachers(res.data || []);
       })
       .catch(() => setTeachers([]));
   }, []);
@@ -371,34 +395,52 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
   const displayRows = useMemo(() => {
     if (!previewRows) return [];
     if (statusFilter === "at_risk") {
-      return previewRows.filter((r) => r.status === "At Risk");
+      return previewRows.filter((r) => {
+        const s = (r.status || "").toLowerCase();
+        return s === "at risk" || s === "at_risk" || s === "at-risk" || s.includes("cannot") || s.includes("risk");
+      });
     }
     if (statusFilter === "warning") {
-      return previewRows.filter((r) => r.status === "Warning");
+      return previewRows.filter((r) => {
+        const s = (r.status || "").toLowerCase();
+        return s === "warning" || s.includes("warn");
+      });
     }
     if (statusFilter === "safe") {
-      return previewRows.filter((r) => r.status === "Safe");
+      return previewRows.filter((r) => {
+        const s = (r.status || "").toLowerCase();
+        return s === "safe" || s.includes("safe");
+      });
     }
     return previewRows;
   }, [previewRows, statusFilter]);
 
   const chartRiskData = useMemo(() => {
-    if (!displayRows || displayRows.length === 0) return [];
-    const safeCount = displayRows.filter((r) => r.status === "Safe").length;
-    const warningCount = displayRows.filter((r) => r.status === "Warning").length;
-    const atRiskCount = displayRows.filter((r) => r.status === "At Risk").length;
+    if (!previewRows || previewRows.length === 0) return [];
+    const safeCount = previewRows.filter((r) => {
+      const s = (r.status || "").toLowerCase();
+      return s === "safe" || s.includes("safe");
+    }).length;
+    const warningCount = previewRows.filter((r) => {
+      const s = (r.status || "").toLowerCase();
+      return s === "warning" || s.includes("warn");
+    }).length;
+    const atRiskCount = previewRows.filter((r) => {
+      const s = (r.status || "").toLowerCase();
+      return s === "at risk" || s === "at_risk" || s === "at-risk" || s.includes("cannot") || s.includes("risk");
+    }).length;
     const list = [
       { name: "Safe", value: safeCount },
       { name: "Warning", value: warningCount },
       { name: "At Risk", value: atRiskCount },
     ];
-    return statusFilter === "all" ? list : list.filter((r) => r.value > 0);
-  }, [displayRows, statusFilter]);
+    return list.filter((r) => r.value > 0);
+  }, [previewRows]);
 
   const chartBandData = useMemo(() => {
-    if (!displayRows || displayRows.length === 0) return [];
+    if (!previewRows || previewRows.length === 0) return [];
     const bands = { "<75%": 0, "75–84.9%": 0, "85–89.9%": 0, "≥90%": 0 };
-    displayRows.forEach((r) => {
+    previewRows.forEach((r) => {
       const p = r.percentage;
       if (p < 75) bands["<75%"]++;
       else if (p < 85) bands["75–84.9%"]++;
@@ -406,7 +448,8 @@ const ReportsTab = ({ courses }: ReportsTabProps) => {
       else bands["≥90%"]++;
     });
     return Object.entries(bands).map(([band, count]) => ({ band, count }));
-  }, [displayRows]);
+  }, [previewRows]);
+
 
   const fetchSummaryPreview = async () => {
     if (!summaryFilters.semester) {
@@ -489,6 +532,7 @@ const renderOfferingFilterPanel = (showStudentFilter: boolean) => (
               <SelectValue placeholder="Select teacher…" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">All Teachers</SelectItem>
               {teachers.map((t) => {
                 let roleTag = "";
                 if (activeOfferingObj) {
@@ -527,7 +571,7 @@ const renderOfferingFilterPanel = (showStudentFilter: boolean) => (
             <SelectContent>
               {offerings
                 .filter((o) => {
-                  if (filterOfferingTeacher === "all") return true;
+                  if (!filterOfferingTeacher || filterOfferingTeacher === "all") return true;
                   const tId = String(filterOfferingTeacher);
                   if (String(o.teacher) === tId) return true;
                   if (Array.isArray(o.secondary_teacher_ids) && o.secondary_teacher_ids.map(String).includes(tId)) return true;
@@ -751,21 +795,34 @@ const renderOfferingFilterPanel = (showStudentFilter: boolean) => (
       </div>
     ) : null;
 
-  const RISK_COLORS = ["#16a34a", "#f59e0b", "#dc2626"];
   const renderCharts = () =>
-    displayRows.length > 0 ? (
+    previewRows.length > 0 ? (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="rounded-xl border border-border bg-background p-4">
           <p className="text-sm font-semibold mb-3">Risk Distribution</p>
-          <div className="h-56">
+          <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={chartRiskData} dataKey="value" nameKey="name" outerRadius={80} innerRadius={40}>
-                  {chartRiskData.map((_, i) => (
-                    <Cell key={i} fill={RISK_COLORS[i % RISK_COLORS.length]} />
+                <Pie
+                  data={chartRiskData}
+                  dataKey="value"
+                  nameKey="name"
+                  outerRadius={70}
+                  innerRadius={35}
+                  label={({ name, percent }) => `${name}: ${formatPercent(percent)}`}
+                  labelLine={true}
+                >
+                  {chartRiskData.map((entry, i) => (
+                    <Cell key={`cell-${i}`} fill={getPieColor(entry.name)} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <Tooltip
+                  formatter={(value: any, name: any) => {
+                    const total = chartRiskData.reduce((acc, curr) => acc + curr.value, 0);
+                    const pct = total > 0 ? formatPercent(Number(value) / total) : "0%";
+                    return [`${value} students (${pct})`, name];
+                  }}
+                />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
@@ -834,7 +891,7 @@ const renderOfferingFilterPanel = (showStudentFilter: boolean) => (
                   <td className="p-3 text-right tabular-nums font-medium">{row.percentage}%</td>
                   <td className="p-3 text-center">
                     <span
-                      className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${STATUS_COLORS[row.status] ?? ""}`}
+                      className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusBadgeStyle(row.status)}`}
                     >
                       {row.status}
                     </span>
@@ -1159,21 +1216,30 @@ const renderOfferingFilterPanel = (showStudentFilter: boolean) => (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="rounded-xl border border-border bg-background p-4">
                   <p className="text-sm font-semibold mb-3">Risk Distribution</p>
-                  <div className="h-56">
+                  <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
-                          data={Object.entries(summaryData.risk_distribution || {}).map(([name, value]) => ({ name, value }))}
+                          data={Object.entries(summaryData.risk_distribution || {}).map(([name, value]) => ({ name, value: Number(value) }))}
                           dataKey="value"
                           nameKey="name"
-                          outerRadius={80}
-                          innerRadius={40}
+                          outerRadius={70}
+                          innerRadius={35}
+                          label={({ name, percent }) => `${name}: ${formatPercent(percent)}`}
+                          labelLine={true}
                         >
-                          {Object.keys(summaryData.risk_distribution || {}).map((_, i) => (
-                            <Cell key={i} fill={RISK_COLORS[i % RISK_COLORS.length]} />
+                          {Object.entries(summaryData.risk_distribution || {}).map(([name], i) => (
+                            <Cell key={`summary-cell-${i}`} fill={getPieColor(name)} />
                           ))}
                         </Pie>
-                        <Tooltip />
+                        <Tooltip
+                          formatter={(value: any, name: any) => {
+                            const summaryList = Object.values(summaryData.risk_distribution || {}) as number[];
+                            const total = summaryList.reduce((acc, curr) => acc + Number(curr), 0);
+                            const pct = total > 0 ? formatPercent(Number(value) / total) : "0%";
+                            return [`${value} students (${pct})`, name];
+                          }}
+                        />
                         <Legend />
                       </PieChart>
                     </ResponsiveContainer>

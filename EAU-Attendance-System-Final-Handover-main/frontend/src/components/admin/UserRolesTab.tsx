@@ -703,7 +703,7 @@ const UserRolesTab = () => {
 
   return (
     <>
-      <Card className="shadow-card border-border/50">
+      <Card className="shadow-card border-border/50 overflow-hidden">
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -734,8 +734,8 @@ const UserRolesTab = () => {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm min-w-[850px]">
             <thead className="border-y border-border bg-muted/30">
               <tr>
                 <th className="text-left px-6 py-3 font-medium text-muted-foreground">

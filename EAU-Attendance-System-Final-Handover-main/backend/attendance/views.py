@@ -2511,6 +2511,7 @@ class CourseOfferingReportView(APIView):
         report_format = request.query_params.get('rpt_format', 'pdf')
         report_type   = request.query_params.get('type', 'full')
         student_id = request.query_params.get('student')
+        status_param = request.query_params.get('status')
         student = Student.objects.filter(id=student_id).first() if student_id else None
         start_date = parse_report_date(request.query_params.get('start_date'))
         end_date = parse_report_date(request.query_params.get('end_date'))
@@ -2529,6 +2530,20 @@ class CourseOfferingReportView(APIView):
                 at_risk_threshold=float(settings.at_risk_threshold),
             )
             aggregates = build_offering_report_aggregates(summary)
+
+            status_label = None
+            if status_param and status_param != 'all':
+                sp = status_param.strip().lower().replace('-', '_')
+                if sp == 'safe':
+                    summary = [r for r in summary if r['status'] == 'Safe']
+                    status_label = "Status: Safe Only"
+                elif sp == 'warning':
+                    summary = [r for r in summary if r['status'] == 'Warning']
+                    status_label = "Status: Warning Only"
+                elif sp == 'at_risk':
+                    summary = [r for r in summary if r['status'] == 'At Risk']
+                    status_label = "Status: At Risk Only"
+
             if report_type == 'weekly':
                 title = "Weekly Attendance Report"
                 filename = f"{offering.course.name}_weekly_{end_date or date.today()}"
@@ -2541,6 +2556,13 @@ class CourseOfferingReportView(APIView):
             if student:
                 filename = f"{filename}_{student.student_id}"
 
+            filter_parts = []
+            if student:
+                filter_parts.append(f"Student: {student.full_name} ({student.student_id})")
+            if status_label:
+                filter_parts.append(status_label)
+            combined_filter_label = ", ".join(filter_parts) if filter_parts else None
+
             if report_format in ['excel', 'xlsx']:
                 return generate_offering_filtered_xlsx(
                     offering,
@@ -2551,7 +2573,7 @@ class CourseOfferingReportView(APIView):
                         'report_type': report_type,
                         'start_date': str(start_date) if start_date else None,
                         'end_date': str(end_date) if end_date else None,
-                        'student_label': f"{student.full_name} ({student.student_id})" if student else None,
+                        'student_label': combined_filter_label or 'All Students',
                     },
                 )
             elif report_format == 'csv':
@@ -2564,14 +2586,14 @@ class CourseOfferingReportView(APIView):
                         'report_type': report_type,
                         'start_date': str(start_date) if start_date else None,
                         'end_date': str(end_date) if end_date else None,
-                        'student_label': f"{student.full_name} ({student.student_id})" if student else None,
+                        'student_label': combined_filter_label or 'All Students',
                     },
                 )
             filter_meta_pdf = {
                 'report_type': report_type,
                 'start_date': str(start_date) if start_date else None,
                 'end_date': str(end_date) if end_date else None,
-                'student_label': f"{student.full_name} ({student.student_id})" if student else None,
+                'student_label': combined_filter_label,
             }
             buffer = generate_course_pdf(offering.course, summary, title,
                                          filter_meta=filter_meta_pdf, offering=offering)

@@ -434,7 +434,7 @@ const CoursesTab = ({
 
   return (
     <>
-      <Card className="shadow-card border-border/50">
+      <Card className="shadow-card border-border/50 overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between pb-4">
           <CardTitle className="font-display text-base">
             Course Management
@@ -567,8 +567,8 @@ const CoursesTab = ({
             )}
           </div>
         )}
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm min-w-[850px]">
             <thead className="border-y border-border bg-muted/30">
               <tr>
                 {isAdmin && (

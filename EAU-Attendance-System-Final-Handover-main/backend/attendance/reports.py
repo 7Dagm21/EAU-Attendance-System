@@ -24,6 +24,7 @@ from openpyxl.styles import (
     PatternFill, Font, Alignment, Border, Side, GradientFill
 )
 from openpyxl.chart import BarChart, PieChart, Reference
+from openpyxl.chart.series import DataPoint
 from openpyxl.chart.label import DataLabelList
 from openpyxl.utils import get_column_letter
 
@@ -160,46 +161,88 @@ def get_course_summary(course, start_date=None, end_date=None):
 # ─────────────────────────────────────────
 # PDF HEADER
 # ─────────────────────────────────────────
-def build_pdf_header(elements, title, subtitle, styles, filter_label=None, report_period=None):
+def get_user_display_name(user):
+    if not user:
+        return ""
+    first = getattr(user, 'first_name', '') or ''
+    last = getattr(user, 'last_name', '') or ''
+    full = f"{first} {last}".strip()
+    if full:
+        return full
+    if hasattr(user, 'get_full_name') and user.get_full_name():
+        gfn = user.get_full_name().strip()
+        if gfn:
+            return gfn
+    if getattr(user, 'full_name', None):
+        return user.full_name
+    return getattr(user, 'username', '')
+
+
+def get_instructor_names(offering):
+    if not offering:
+        return "N/A"
+    names = []
+    if hasattr(offering, 'teacher') and offering.teacher:
+        t_name = get_user_display_name(offering.teacher)
+        if t_name:
+            names.append(t_name)
+    try:
+        if hasattr(offering, 'secondary_teachers'):
+            for st in offering.secondary_teachers.all():
+                st_name = get_user_display_name(st)
+                if st_name and st_name not in names:
+                    names.append(st_name)
+    except Exception:
+        pass
+    return ", ".join(names) if names else "N/A"
+
+
+def build_pdf_header(elements, title, subtitle, styles, filter_label=None, report_period=None, instructor_name=None):
     elements.append(Paragraph(
         "Ethiopian Aviation University",
-        ParagraphStyle('uni', fontSize=10, textColor=GRAY, alignment=1, spaceAfter=3)
+        ParagraphStyle('uni', fontSize=10, leading=13, textColor=GRAY, alignment=1, spaceAfter=2)
     ))
     elements.append(Paragraph(
         "Student Attendance Management System",
-        ParagraphStyle('sys', fontSize=8, textColor=GRAY, alignment=1, spaceAfter=10)
+        ParagraphStyle('sys', fontSize=8, leading=11, textColor=GRAY, alignment=1, spaceAfter=8)
     ))
     elements.append(Paragraph(
         title,
-        ParagraphStyle('title', fontSize=18, textColor=DARK_GREEN, alignment=1,
-                       spaceAfter=5, fontName='Helvetica-Bold')
+        ParagraphStyle('title', fontSize=16, leading=20, textColor=DARK_GREEN, alignment=1,
+                       spaceAfter=4, fontName='Helvetica-Bold')
     ))
     elements.append(Paragraph(
         subtitle,
-        ParagraphStyle('sub', fontSize=10, textColor=MID_GREEN, alignment=1, spaceAfter=4)
+        ParagraphStyle('sub', fontSize=9, leading=13, textColor=MID_GREEN, alignment=1, spaceAfter=4)
     ))
+    if instructor_name and instructor_name != "N/A":
+        elements.append(Paragraph(
+            f"Instructor: {instructor_name}",
+            ParagraphStyle('inst', fontSize=9, leading=12, textColor=DARK_GREEN, alignment=1,
+                           spaceAfter=3, fontName='Helvetica-Bold')
+        ))
     if report_period:
         elements.append(Paragraph(
             f"Period: {report_period}",
-            ParagraphStyle('period', fontSize=9, textColor=BLUE, alignment=1,
+            ParagraphStyle('period', fontSize=9, leading=12, textColor=BLUE, alignment=1,
                            spaceAfter=3, fontName='Helvetica-Bold')
         ))
     if filter_label:
         elements.append(Paragraph(
             f"Filter: {filter_label}",
-            ParagraphStyle('filter', fontSize=9, textColor=GRAY, alignment=1, spaceAfter=3)
+            ParagraphStyle('filter', fontSize=9, leading=12, textColor=GRAY, alignment=1, spaceAfter=3)
         ))
     elements.append(Paragraph(
         f"Generated: {date.today().strftime('%d %B %Y')}",
-        ParagraphStyle('gendate', fontSize=9, textColor=GRAY, alignment=1, spaceAfter=14)
+        ParagraphStyle('gendate', fontSize=9, leading=12, textColor=GRAY, alignment=1, spaceAfter=12)
     ))
-    elements.append(Spacer(1, 0.15 * inch))
+    elements.append(Spacer(1, 0.1 * inch))
 
 
 # ─────────────────────────────────────────
 # PDF BAR CHART (ReportLab native)
 # ─────────────────────────────────────────
-def build_pdf_bar_chart(band_data, width=300, height=185):
+def build_pdf_bar_chart(band_data, width=310, height=195):
     """band_data: list of (label, count)"""
     if not band_data:
         return None
@@ -209,27 +252,27 @@ def build_pdf_bar_chart(band_data, width=300, height=185):
     drawing = Drawing(width, height)
 
     chart = VerticalBarChart()
-    chart.x = 50
-    chart.y = 45
-    chart.width = width - 70
-    chart.height = height - 75
+    chart.x = 45
+    chart.y = 55
+    chart.width = width - 60
+    chart.height = height - 85
     chart.data = [values]
     chart.categoryAxis.categoryNames = labels
     chart.categoryAxis.labels.angle = 0
     chart.categoryAxis.labels.fontSize = 8
+    chart.categoryAxis.labels.dy = -10
     chart.valueAxis.labels.fontSize = 8
     chart.valueAxis.forceZero = 1
     chart.bars[0].fillColor = BLUE
     chart.bars[0].strokeColor = None
 
-    title_str = String(width / 2, height - 10, "Attendance Bands",
+    title_str = String(width / 2, height - 12, "Attendance Bands",
                        fontSize=9, fontName='Helvetica-Bold',
                        fillColor=DARK_GREEN, textAnchor='middle')
-    # Legend: band explanations below the chart
-    legend_text = String(width / 2, 30,
+    legend_text = String(width / 2, 12,
                          "Bands: <75% = At Risk  |  75–84.9% = Warning  |  85–89.9% = Near-Safe  |  ≥90% = Safe",
                          fontSize=6.5, fontName='Helvetica', fillColor=GRAY, textAnchor='middle')
-    y_axis_label = String(10, height / 2, "No. of Students",
+    y_axis_label = String(10, height / 2 + 10, "No. of Students",
                           fontSize=7, fontName='Helvetica', fillColor=GRAY, textAnchor='middle')
     drawing.add(chart)
     drawing.add(title_str)
@@ -238,7 +281,7 @@ def build_pdf_bar_chart(band_data, width=300, height=185):
     return drawing
 
 
-def build_pdf_pie_chart(risk_data, width=240, height=160):
+def build_pdf_pie_chart(risk_data, width=260, height=195):
     """risk_data: list of (label, value)"""
     if not risk_data:
         return None
@@ -246,21 +289,21 @@ def build_pdf_pie_chart(risk_data, width=240, height=160):
     drawing = Drawing(width, height)
 
     pie = Pie()
-    pie.x = 55
-    pie.y = 25
-    pie.width = 110
-    pie.height = 110
+    pie.x = 60
+    pie.y = 35
+    pie.width = 120
+    pie.height = 120
     pie.data = [max(r[1], 0) for r in risk_data]
     pie.labels = [f"{r[0]}\n({r[1]})" for r in risk_data]
     pie.sideLabels = True
     pie.simpleLabels = False
-    pie.slices.fontSize = 7
+    pie.slices.fontSize = 7.5
     for i, c in enumerate(pie_colors[:len(risk_data)]):
         pie.slices[i].fillColor = c
         pie.slices[i].strokeColor = WHITE
         pie.slices[i].strokeWidth = 1
 
-    title_str = String(width / 2, height - 10, "Risk Distribution",
+    title_str = String(width / 2, height - 12, "Risk Distribution",
                        fontSize=9, fontName='Helvetica-Bold',
                        fillColor=DARK_GREEN, textAnchor='middle')
     drawing.add(pie)
@@ -284,6 +327,7 @@ def generate_course_pdf(course, summary, title, filter_meta=None, offering=None)
     filter_meta = filter_meta or {}
     period_label, period_type = format_date_range(filter_meta)
     student_label = filter_meta.get('student_label')
+    instructor_names = get_instructor_names(offering)
 
     # Section/offering subtitle
     if offering:
@@ -300,6 +344,7 @@ def generate_course_pdf(course, summary, title, filter_meta=None, offering=None)
         elements, title, subtitle, styles,
         filter_label=student_label,
         report_period=period_label,
+        instructor_name=instructor_names,
     )
 
     # ── KPI summary row ──────────────────
@@ -659,14 +704,22 @@ def _xl_add_bar_chart(ws, chart_data_row_start, num_categories, chart_anchor,
     chart.x_axis.title = "Band"
     chart.width = 14
     chart.height = 9
+    chart.legend = None  # Remove unneeded Series1 legend box
     data_ref = Reference(ws, min_col=series_col, min_row=chart_data_row_start,
                          max_row=chart_data_row_start + num_categories - 1)
     cats_ref = Reference(ws, min_col=cat_col, min_row=chart_data_row_start,
                          max_row=chart_data_row_start + num_categories - 1)
     chart.add_data(data_ref)
     chart.set_categories(cats_ref)
-    chart.series[0].title = None
-    chart.series[0].graphicalProperties.solidFill = "2563EB"
+
+    # Color individual bars by category: <75% (Red), 75-84.9% (Amber), 85-89.9% (Blue), >=90% (Green)
+    if num_categories == 4 and chart.series:
+        band_colors = ["DC2626", "F59E0B", "2563EB", "27AE60"]
+        for idx, color_hex in enumerate(band_colors):
+            dp = DataPoint(idx=idx)
+            dp.graphicalProperties.solidFill = color_hex
+            chart.series[0].data_points.append(dp)
+
     ws.add_chart(chart, chart_anchor)
 
 def _xl_add_pie_chart(ws, chart_data_row_start, num_slices, chart_anchor,
@@ -682,7 +735,20 @@ def _xl_add_pie_chart(ws, chart_data_row_start, num_slices, chart_anchor,
                          max_row=chart_data_row_start + num_slices - 1)
     chart.add_data(data_ref)
     chart.set_categories(cats_ref)
-    chart.dataLabels = DataLabelList(showPercent=True)
+    chart.dataLabels = DataLabelList()
+    chart.dataLabels.showPercent = True
+    chart.dataLabels.showVal = False
+    chart.dataLabels.showSerName = False  # Remove ugly Series1 prefix
+    chart.dataLabels.showCatName = True
+
+    # Dedicated risk colors: Safe = Green (27AE60), Warning = Amber (F59E0B), At Risk = Red (DC2626)
+    if num_slices == 3 and chart.series:
+        risk_colors = ["27AE60", "F59E0B", "DC2626"]
+        for idx, color_hex in enumerate(risk_colors):
+            dp = DataPoint(idx=idx)
+            dp.graphicalProperties.solidFill = color_hex
+            chart.series[0].data_points.append(dp)
+
     ws.add_chart(chart, chart_anchor)
 
 
@@ -694,6 +760,7 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
     filter_meta = filter_meta or {}
     period_label, period_type = format_date_range(filter_meta)
     student_label = filter_meta.get('student_label', 'All Students')
+    instructor_names = get_instructor_names(offering)
 
     wb = openpyxl.Workbook()
 
@@ -702,20 +769,20 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
     ws.title = "Attendance Report"
     ws.sheet_view.showGridLines = False
 
-    # Title block (row 1-2)
-    ws.merge_cells('A1:J1')
+    # Title block (row 1-2) — merge across full width A:L
+    ws.merge_cells('A1:L1')
     ws['A1'].value = "Ethiopian Aviation University — Student Attendance Management System"
     ws['A1'].font = _xl_font(bold=True, color=XL_HEADER_FONT, size=13)
     ws['A1'].fill = _xl_fill(XL_HEADER_BG)
     ws['A1'].alignment = _xl_center()
 
-    ws.merge_cells('A2:J2')
+    ws.merge_cells('A2:L2')
     ws['A2'].value = f"{offering.course.name}  |  Section {offering.section.name} (Year {offering.section.year})"
     ws['A2'].font = _xl_font(bold=True, color='FFFFFF', size=11)
     ws['A2'].fill = _xl_fill(XL_SUBHEADER)
     ws['A2'].alignment = _xl_center()
-    ws.row_dimensions[1].height = 22
-    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[1].height = 24
+    ws.row_dimensions[2].height = 20
 
     # Info block
     try:
@@ -731,6 +798,7 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
     info = [
         ("Programme:",        programme_name),
         ("Semester:",         semester_label),
+        ("Instructor(s):",    instructor_names),
         ("Report Period:",    period_label),
         ("Filter Type:",      period_type),
         ("Student Filter:",   student_label),
@@ -744,19 +812,19 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
         ws.cell(current_row, 1).font = _xl_font(bold=True, color=XL_SUBHEADER)
         ws.cell(current_row, 2).value = val
         ws.cell(current_row, 2).font = _xl_font(color='1F2937')
-        ws.row_dimensions[current_row].height = 15
+        ws.row_dimensions[current_row].height = 16
         current_row += 1
 
     current_row += 1
 
     # Count row
-    total = aggregates['total_students']
-    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=10)
-    ws.cell(current_row, 1).value = f"Total Students in this Report: {total}"
+    report_total = len(rows)
+    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=12)
+    ws.cell(current_row, 1).value = f"Total Students in this Report: {report_total}"
     ws.cell(current_row, 1).fill = _xl_fill(XL_HEADER_BG)
     ws.cell(current_row, 1).font = _xl_font(bold=True, color='FFFFFF', size=11)
     ws.cell(current_row, 1).alignment = _xl_center()
-    ws.row_dimensions[current_row].height = 18
+    ws.row_dimensions[current_row].height = 20
     current_row += 1
 
     # Table header
@@ -764,7 +832,7 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
                'Excused Hrs', 'Absent Hrs', 'Attended %', 'Min Req. Hrs', 'Status',
                'Late Dates', 'Absent Dates']
     _xl_apply_table_header(ws, current_row, headers)
-    ws.row_dimensions[current_row].height = 18
+    ws.row_dimensions[current_row].height = 20
     table_header_row = current_row
     current_row += 1
 
@@ -807,26 +875,38 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
             else:
                 c.fill = row_fill
                 c.font = _xl_font(color='1F2937', size=9)
-        ws.row_dimensions[current_row].height = 15
+        ws.row_dimensions[current_row].height = 16
         current_row += 1
 
-    # Column widths
-    col_widths_map = {'A': 5, 'B': 14, 'C': 28, 'D': 12, 'E': 10,
-                      'F': 12, 'G': 11, 'H': 12, 'I': 13, 'J': 12,
-                      'K': 18, 'L': 18}
+    # Column widths — Column A width 22 ensures no label truncation in Info block or Summary table
+    col_widths_map = {
+        'A': 22,
+        'B': 16,
+        'C': 28,
+        'D': 12,
+        'E': 10,
+        'F': 12,
+        'G': 11,
+        'H': 12,
+        'I': 13,
+        'J': 12,
+        'K': 20,
+        'L': 20
+    }
     for col, w in col_widths_map.items():
         ws.column_dimensions[col].width = w
 
     current_row += 1
 
     # ── KPI summary block ─────────────────
-    current_row = _xl_write_section_title(ws, current_row, "📊 Summary Statistics", col_span=10)
+    current_row = _xl_write_section_title(ws, current_row, "📊 Summary Statistics", col_span=12)
     kpi_headers = ['Metric', 'Value']
     _xl_apply_table_header(ws, current_row, kpi_headers)
     current_row += 1
 
     kpis = [
-        ("Total Students", total),
+        ("Total Course Enrollment", aggregates['total_students']),
+        ("Students in this Report", report_total),
         ("Average Attendance %", f"{aggregates['average_attendance_percentage']}%"),
         ("Safe", aggregates['safe_count']),
         ("Warning", aggregates['warning_count']),
@@ -841,6 +921,7 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
         ws.cell(current_row, 2).font = _xl_font(color='1F2937')
         ws.cell(current_row, 2).border = _xl_border()
         ws.cell(current_row, 2).alignment = _xl_center()
+        ws.row_dimensions[current_row].height = 16
         current_row += 1
 
     current_row += 1
@@ -852,13 +933,13 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
     ws2['A1'].value = "Attendance Bands"
     ws2['A1'].font = _xl_font(bold=True, color=XL_SUBHEADER, size=11)
 
-    # Legend explanation
-    ws2.merge_cells('A2:B2')
+    # Legend explanation — merge across A2:F2 so it doesn't wrap or overlap table header
+    ws2.merge_cells('A2:F2')
     ws2['A2'].value = "Bands: <75% = At Risk  |  75–84.9% = Warning  |  85–89.9% = Near-Safe  |  ≥90% = Safe"
     ws2['A2'].font = _xl_font(bold=False, color='374151', size=9)
-    ws2['A2'].alignment = _xl_center()
+    ws2['A2'].alignment = Alignment(horizontal='left', vertical='center', wrap_text=False)
+    ws2.row_dimensions[2].height = 20
 
-    band_labels = ['<75%', '75-84.9%', '85-89.9%', '>=90%']
     band_display = ['<75%', '75–84.9%', '85–89.9%', '≥90%']
     band_values = [
         aggregates['attendance_bands'].get('<75%', 0),
@@ -866,12 +947,14 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
         aggregates['attendance_bands'].get('85-89.9%', 0),
         aggregates['attendance_bands'].get('>=90%', 0),
     ]
-    _xl_apply_table_header(ws2, 3, ['Band', 'Students'])
+    _xl_apply_table_header(ws2, 4, ['Band', 'Students'])
+    ws2.row_dimensions[4].height = 18
     for i, (label, val) in enumerate(zip(band_display, band_values)):
-        ws2.cell(4 + i, 1).value = label
-        ws2.cell(4 + i, 2).value = val
-        ws2.cell(4 + i, 1).font = _xl_font()
-        ws2.cell(4 + i, 2).font = _xl_font()
+        ws2.cell(5 + i, 1).value = label
+        ws2.cell(5 + i, 2).value = val
+        ws2.cell(5 + i, 1).font = _xl_font()
+        ws2.cell(5 + i, 2).font = _xl_font()
+        ws2.row_dimensions[5 + i].height = 15
 
     ws2.cell(11, 1).value = "Risk Distribution"
     ws2.cell(11, 1).font = _xl_font(bold=True, color=XL_SUBHEADER, size=11)
@@ -879,21 +962,23 @@ def generate_offering_filtered_xlsx(offering, rows, aggregates, filename, filter
     risk_labels = ['Safe', 'Warning', 'At Risk']
     risk_values = [aggregates['safe_count'], aggregates['warning_count'], aggregates['at_risk_count']]
     _xl_apply_table_header(ws2, 12, ['Status', 'Count'])
+    ws2.row_dimensions[12].height = 18
     for i, (label, val) in enumerate(zip(risk_labels, risk_values)):
         ws2.cell(13 + i, 1).value = label
         ws2.cell(13 + i, 2).value = val
         ws2.cell(13 + i, 1).font = _xl_font()
         ws2.cell(13 + i, 2).font = _xl_font()
+        ws2.row_dimensions[13 + i].height = 15
 
-    ws2.column_dimensions['A'].width = 16
-    ws2.column_dimensions['B'].width = 12
+    ws2.column_dimensions['A'].width = 18
+    ws2.column_dimensions['B'].width = 14
 
-    # Add charts to Sheet 2
-    _xl_add_bar_chart(ws2, chart_data_row_start=4, num_categories=4,
-                       chart_anchor="D3", title="Attendance Bands",
+    # Add charts to Sheet 2 — place bar chart at D4, pie chart at D22
+    _xl_add_bar_chart(ws2, chart_data_row_start=5, num_categories=4,
+                       chart_anchor="D4", title="Attendance Bands",
                        series_col=2, cat_col=1)
     _xl_add_pie_chart(ws2, chart_data_row_start=13, num_slices=3,
-                       chart_anchor="D25", title="Risk Distribution",
+                       chart_anchor="D22", title="Risk Distribution",
                        val_col=2, cat_col=1)
 
     # ── Write to buffer ───────────────────
@@ -1513,11 +1598,17 @@ def get_offering_student_report_data(
         missed_hours     = absent_hours   # excused NOT counted as missed
         total_logged     = attended_hours + missed_hours
         total_credit     = _D(str(offering.course.total_credit_hours))
-        effective_credit = max(total_credit - excused_hours, _D('1'))
         late_count       = records.filter(status='late').count()
-        earned, percentage = calc_attendance(present_hours, late_hours, effective_credit, late_count)
 
-        if not is_gate_open(total_logged, total_credit):
+        # For Reports page: calculate percentage based strictly on classes held/logged so far
+        effective_held   = max(total_logged, _D('0'))
+        if effective_held > 0:
+            earned, percentage = calc_attendance(present_hours, late_hours, effective_held, late_count)
+        else:
+            earned = _D('0')
+            percentage = 100.0
+
+        if effective_held == 0:
             status = 'Safe'
         elif percentage < at_risk_threshold:
             status = 'At Risk'
@@ -1561,7 +1652,7 @@ def get_offering_student_report_data(
             'absent_hours':     float(absent_hours),
             'attended_hours':   float(earned),
             'missed_hours':     float(missed_hours),
-            'total_hours':      float(total_credit),
+            'total_hours':      float(effective_held if effective_held > 0 else total_credit),
             'percentage':       percentage,
             'minimum_required': float(offering.course.minimum_required_hours),
             'status':           status,

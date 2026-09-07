@@ -431,7 +431,7 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
   };
 
   return (
-    <Card className="shadow-card border-border/50">
+    <Card className="shadow-card border-border/50 overflow-hidden">
       <CardHeader className="pb-4">
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
@@ -574,7 +574,7 @@ const AttendanceTab = ({ courses, programmes }: AttendanceTabProps) => {
           </div>
         </div>
       </CardHeader>
-      <CardContent className="p-0">
+      <CardContent className="p-0 overflow-x-auto">
         {loading && (
           <div className="text-center py-12 text-muted-foreground text-sm">
             Loading records...

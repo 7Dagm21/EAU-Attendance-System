@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Bell, AlertTriangle, CheckCircle, Info, Send, X } from "lucide-react";
+import { Bell, AlertTriangle, CheckCircle, Info, Send, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface Notification {
@@ -47,12 +47,21 @@ const NotificationsTab = ({ notifications, onMarkRead }: NotificationsTabProps) 
           </div>
           <div className="flex items-center gap-2">
             {notifications.length > 0 && (
-              <button
-                onClick={handleMarkAll}
-                className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-              >
-                <CheckCircle className="w-3.5 h-3.5" /> Mark all read
-              </button>
+              <>
+                <button
+                  onClick={handleMarkAll}
+                  className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" /> Mark all read
+                </button>
+                <button
+                  onClick={handleMarkAll}
+                  className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-destructive/10 hover:text-destructive transition-colors text-muted-foreground"
+                  title="Clear notification list"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Clear List
+                </button>
+              </>
             )}
             <button
               onClick={async () => {
