@@ -26,6 +26,3 @@ npm install
 npm run dev
 ```
 
-## Default Login
-- Admin: admin / admin123
-- Teachers: teacher1-5 / teacher123
