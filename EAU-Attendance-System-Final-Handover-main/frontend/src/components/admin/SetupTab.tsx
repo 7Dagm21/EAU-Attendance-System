@@ -43,6 +43,7 @@ import {
   deleteDepartmentApi,
   getSectionsApi,
   createSectionApi,
+  updateSectionApi,
   deleteSectionApi,
   getOfferingsApi,
   createOfferingApi,
@@ -1181,7 +1182,13 @@ const ProgrammesPanel = ({
           </table>
         </CardContent>
       </Card>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setEditing(null);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display">
@@ -1262,12 +1269,17 @@ const DepartmentsPanel = ({
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ name: "", code: "", programme_id: "" });
+    setForm({ name: "", code: "", programme_id: filterProg || "" });
     setOpen(true);
   };
   const openEdit = (d: Department) => {
     setEditing(d);
-    setForm({ name: d.name, code: d.code, programme_id: String(d.programme) });
+    const progId = typeof d.programme === "object" ? (d.programme as any)?.id : d.programme;
+    setForm({
+      name: d.name,
+      code: d.code || "",
+      programme_id: progId ? String(progId) : "",
+    });
     setOpen(true);
   };
 
@@ -1305,6 +1317,7 @@ const DepartmentsPanel = ({
         setDepartments((p: Department[]) => [...p, r.data]);
         toast.success("Department added!");
       }
+      setEditing(null);
       setOpen(false);
     } catch (e: any) {
       toast.error(e?.response?.data?.error || "Failed");
@@ -1314,7 +1327,10 @@ const DepartmentsPanel = ({
   };
 
   const filtered = filterProg
-    ? departments.filter((d) => String(d.programme) === filterProg)
+    ? departments.filter((d) => {
+        const progId = typeof d.programme === "object" ? (d.programme as any)?.id : d.programme;
+        return String(progId) === filterProg;
+      })
     : departments;
 
   return (
@@ -1424,7 +1440,13 @@ const DepartmentsPanel = ({
           </table>
         </CardContent>
       </Card>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setEditing(null);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display">
@@ -1498,6 +1520,7 @@ const SectionsPanel = ({
   setFilterProgramme,
 }: any) => {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Section | null>(null);
   const [form, setForm] = useState({
     name: "",
     programme_id: "",
@@ -1505,6 +1528,31 @@ const SectionsPanel = ({
     semester_id: "",
   });
   const [saving, setSaving] = useState(false);
+
+  const openAdd = () => {
+    setEditing(null);
+    setForm({
+      name: "",
+      programme_id: filterProgramme || "",
+      year: "1",
+      semester_id: filterSemester || "",
+    });
+    setOpen(true);
+  };
+
+  const openEdit = (s: Section) => {
+    setEditing(s);
+    const progId = typeof s.programme === "object" ? (s.programme as any)?.id : s.programme;
+    const semId = typeof s.semester === "object" ? (s.semester as any)?.id : s.semester;
+    setForm({
+      name: s.name,
+      programme_id: progId ? String(progId) : (filterProgramme || ""),
+      year: String(s.year || 1),
+      semester_id: semId ? String(semId) : (filterSemester || ""),
+    });
+    setOpen(true);
+  };
+
   const selectedProg = programmes.find(
     (p: Programme) => p.id === parseInt(form.programme_id),
   );
@@ -1522,14 +1570,24 @@ const SectionsPanel = ({
     }
     setSaving(true);
     try {
-      const r = await createSectionApi({
+      const payload = {
         name: form.name,
         programme_id: parseInt(form.programme_id),
         year: parseInt(form.year),
         semester_id: parseInt(form.semester_id),
-      });
-      setSections((p: Section[]) => [...p, r.data]);
-      toast.success("Section created!");
+      };
+      if (editing) {
+        const r = await updateSectionApi(editing.id, payload);
+        setSections((p: Section[]) =>
+          p.map((s: Section) => (s.id === editing.id ? r.data : s))
+        );
+        toast.success("Section updated!");
+      } else {
+        const r = await createSectionApi(payload);
+        setSections((p: Section[]) => [...p, r.data]);
+        toast.success("Section created!");
+      }
+      setEditing(null);
       setOpen(false);
       setForm({ name: "", programme_id: "", year: "1", semester_id: "" });
     } catch (e: any) {
@@ -1712,7 +1770,7 @@ const SectionsPanel = ({
             <Button
               size="sm"
               className="gap-1.5 bg-primary hover:bg-primary/90"
-              onClick={() => setOpen(true)}
+              onClick={openAdd}
             >
               <Plus className="w-4 h-4" /> Add Section
             </Button>
@@ -1804,8 +1862,16 @@ const SectionsPanel = ({
                         <Users className="w-3 h-3" /> Manage Students
                       </button>
                       <button
+                        onClick={() => openEdit(s)}
+                        className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                        title="Edit Section"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => handleDelete(s.id)}
                         className="p-1.5 rounded-md hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"
+                        title="Delete Section"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -1818,10 +1884,18 @@ const SectionsPanel = ({
         </CardContent>
       </Card>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setEditing(null);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-display">Add Section</DialogTitle>
+            <DialogTitle className="font-display">
+              {editing ? "Edit" : "Add"} Section
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="grid grid-cols-2 gap-3">
@@ -1893,7 +1967,7 @@ const SectionsPanel = ({
                 disabled={saving}
                 className="bg-primary hover:bg-primary/90"
               >
-                {saving ? "Saving..." : "Add Section"}
+                {saving ? "Saving..." : editing ? "Save Changes" : "Add Section"}
               </Button>
             </div>
           </div>

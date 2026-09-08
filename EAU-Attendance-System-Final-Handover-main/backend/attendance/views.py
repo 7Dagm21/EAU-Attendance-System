@@ -688,10 +688,10 @@ class DepartmentListView(APIView):
         return Response(DepartmentSerializer(departments, many=True).data)
 
     def post(self, request):
-        if not is_admin(request.user):
+        if not is_elevated(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         name = request.data.get('name')
-        programme_id = request.data.get('programme_id')
+        programme_id = request.data.get('programme_id') or request.data.get('programme')
         if not name or not programme_id:
             return Response({'error': 'name and programme_id are required'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -700,6 +700,9 @@ class DepartmentListView(APIView):
         except Programme.DoesNotExist:
             return Response({'error': 'Programme not found'},
                             status=status.HTTP_404_NOT_FOUND)
+        if request.user.role == 'dean' and request.user.managed_programme_id != programme.id:
+            return Response({'error': 'You can only create departments in your managed school'},
+                            status=status.HTTP_403_FORBIDDEN)
         dept = Department.objects.create(
             name=name,
             code=request.data.get('code', ''),
@@ -712,23 +715,36 @@ class DepartmentDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, dept_id):
-        if not is_admin(request.user):
+        if not is_elevated(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         try:
             dept = Department.objects.get(id=dept_id)
         except Department.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role == 'dean' and request.user.managed_programme_id != dept.programme_id:
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         for field in ['name', 'code', 'is_active']:
             if field in request.data:
                 setattr(dept, field, request.data[field])
+        pid = request.data.get('programme_id') or request.data.get('programme')
+        if pid:
+            try:
+                new_prog = Programme.objects.get(id=pid)
+                if request.user.role == 'dean' and request.user.managed_programme_id != new_prog.id:
+                    return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+                dept.programme = new_prog
+            except Programme.DoesNotExist:
+                return Response({'error': 'Programme not found'}, status=status.HTTP_404_NOT_FOUND)
         dept.save()
         return Response(DepartmentSerializer(dept).data)
 
     def delete(self, request, dept_id):
-        if not is_admin(request.user):
+        if not is_elevated(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         try:
             dept = Department.objects.get(id=dept_id)
+            if request.user.role == 'dean' and request.user.managed_programme_id != dept.programme_id:
+                return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
             dept.is_active = False
             dept.save()
             return Response({'message': 'Department deactivated'})
@@ -986,7 +1002,7 @@ class SectionListView(APIView):
         return Response(SectionSerializer(sections, many=True).data)
 
     def post(self, request):
-        if not is_admin(request.user):
+        if not is_elevated(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         required = ['name', 'programme_id', 'year', 'semester_id']
         for f in required:
@@ -998,6 +1014,9 @@ class SectionListView(APIView):
             semester = Semester.objects.get(id=request.data['semester_id'])
         except (Programme.DoesNotExist, Semester.DoesNotExist) as e:
             return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role == 'dean' and request.user.managed_programme_id != programme.id:
+            return Response({'error': 'You can only create sections in your managed school'},
+                            status=status.HTTP_403_FORBIDDEN)
         section, created = Section.objects.get_or_create(
             name=request.data['name'],
             programme=programme,
@@ -1012,23 +1031,43 @@ class SectionDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, section_id):
-        if not is_admin(request.user):
+        if not is_elevated(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         try:
             section = Section.objects.get(id=section_id)
         except Section.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role == 'dean' and request.user.managed_programme_id != section.programme_id:
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         for field in ['name', 'year']:
             if field in request.data:
                 setattr(section, field, request.data[field])
+        pid = request.data.get('programme_id') or request.data.get('programme')
+        if pid:
+            try:
+                prog = Programme.objects.get(id=pid)
+                if request.user.role == 'dean' and request.user.managed_programme_id != prog.id:
+                    return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+                section.programme = prog
+            except Programme.DoesNotExist:
+                return Response({'error': 'Programme not found'}, status=status.HTTP_404_NOT_FOUND)
+        sid = request.data.get('semester_id') or request.data.get('semester')
+        if sid:
+            try:
+                sem = Semester.objects.get(id=sid)
+                section.semester = sem
+            except Semester.DoesNotExist:
+                return Response({'error': 'Semester not found'}, status=status.HTTP_404_NOT_FOUND)
         section.save()
         return Response(SectionSerializer(section).data)
 
     def delete(self, request, section_id):
-        if not is_admin(request.user):
+        if not is_elevated(request.user):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         try:
             section = Section.objects.get(id=section_id)
+            if request.user.role == 'dean' and request.user.managed_programme_id != section.programme_id:
+                return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
             section.delete()
             return Response({'message': 'Section deleted'})
         except Section.DoesNotExist:
