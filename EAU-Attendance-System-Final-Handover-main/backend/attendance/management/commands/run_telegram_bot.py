@@ -50,8 +50,13 @@ class Command(BaseCommand):
 
                             if students.exists():
                                 students.update(parent_telegram_chat_id=str(chat_id))
-                                self.send_message(token, chat_id, f"Welcome @{clean_u}! Your account has been successfully linked. You will now receive attendance alerts here.")
-                                self.stdout.write(self.style.SUCCESS(f"Linked @{clean_u} to Chat ID: {chat_id}"))
+                                names = ", ".join([f"{s.first_name} {s.last_name}" for s in students])
+                                self.send_message(
+                                    token,
+                                    chat_id,
+                                    f"Welcome @{clean_u}! Your Telegram account has been successfully linked to {students.count()} student(s):\n• {names}\n\nYou will automatically receive attendance notifications for all your registered children here."
+                                )
+                                self.stdout.write(self.style.SUCCESS(f"Linked @{clean_u} to Chat ID: {chat_id} ({students.count()} students: {names})"))
                             else:
                                 self.send_message(token, chat_id, f"Welcome! We couldn't find a student registered under username @{clean_u}. Please inform the school administration.")
 
